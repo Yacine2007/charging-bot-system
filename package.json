@@ -1,0 +1,17 @@
+{
+  "name": "charging-bot-system",
+  "version": "1.0.0",
+  "description": "Dual bot system for charging and admin management",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "mongoose": "^8.0.0",
+    "dotenv": "^16.3.0"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
