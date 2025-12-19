@@ -1,10 +1,12 @@
 const TelegramBot = require('node-telegram-bot-api');
 
-// إعداد التوكنات
+// === إعداد التوكنات ===
 const CHARGING_BOT_TOKEN = '8223596744:AAGHOMQ3Sjk3-X_Z7eXXnL5drAXaHXglLFg';
 const ADMIN_BOT_TOKEN = '8216188569:AAEEA1q_os_6XfSJrUDLDkkQxZXh-3OMAVU';
-const ADMIN_ID = 7450109529;
-const SECOND_ADMIN_ID = 1081707421; // @ycnbnmkrn
+
+// === إعداد المدراء ===
+const ADMIN_ID = 7656412227; // أنت (Yacine)
+const SECOND_ADMIN_ID = 7450109529; // صديقك
 const PAYMENT_ID = '953936100';
 
 // إنشاء البوتات
@@ -24,14 +26,14 @@ const USER_ROLES = {
 const adminUsers = new Map();
 adminUsers.set(ADMIN_ID.toString(), {
     id: ADMIN_ID,
-    username: 'الرئيسي',
+    username: 'Yacine',
     role: USER_ROLES.SUPER_ADMIN,
     permissions: ['all']
 });
 
 adminUsers.set(SECOND_ADMIN_ID.toString(), {
     id: SECOND_ADMIN_ID,
-    username: '@ycnbnmkrn',
+    username: 'صديقك',
     role: USER_ROLES.ADMIN,
     permissions: ['statistics', 'add_balance', 'view_orders', 'confirm_deposits', 'add_service', 'set_discount']
 });
@@ -1434,6 +1436,6 @@ chargingBot.on('callback_query', async (callbackQuery) => {
 console.log('🚀 بدء تشغيل نظام البوتات...');
 console.log('🤖 بوت الشحن: @Diamouffbot');
 console.log('👑 بوت الإدارة: @otzhabot');
-console.log('👤 المسؤول الرئيسي: ' + ADMIN_ID);
+console.log('👤 المسؤول الرئيسي (أنت): ' + ADMIN_ID + ' (Yacine)');
 console.log('👤 المسؤول الثاني: ' + SECOND_ADMIN_ID);
 console.log('✅ النظام يعمل بنجاح!');
