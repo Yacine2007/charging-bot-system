@@ -1066,3 +1066,17 @@ console.log('👑 بوت الإدارة: @otzhabot');
 console.log('👤 المسؤول الرئيسي: ' + ADMIN_ID);
 console.log('👤 المسؤول الثاني: ' + SECOND_ADMIN_ID);
 console.log('✅ النظام يعمل بنجاح!');
+
+// إضافة هذا الجزء للنشر على Render
+const PORT = process.env.PORT || 3000;
+
+// كود بسيط ليبقى السيرفر نشطاً (للتجربة فقط)
+const http = require('http');
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot is running!');
+});
+
+server.listen(PORT, () => {
+    console.log(`🌐 السيرفر يعمل على المنفذ: ${PORT}`);
+});
