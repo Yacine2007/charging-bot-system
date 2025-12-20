@@ -15,152 +15,95 @@ const adminBot = new TelegramBot(ADMIN_BOT_TOKEN, { polling: true });
 
 // ========== تخزين البيانات في الذاكرة ==========
 
-const users = new Map();
-const services = new Map();
-const orders = new Map();
+const users = new Map(); // {userId: {balance, username}}
+const depositRequests = new Map(); // {requestId: {userId, amount, photoId, username, status}}
 
-// ========== دوال إرسال إشعارات إلى المدراء ==========
+let requestCounter = 1;
 
-async function sendOrderNotificationToAdmins(orderDetails, photoId = null) {
-    const admins = [ADMIN_ID, SECOND_ADMIN_ID];
-    
-    for (const adminId of admins) {
-        try {
-            const message = `🔔 *طلب جديد*\n\n` +
-                          `👤 المستخدم: @${orderDetails.username || 'بدون'}\n` +
-                          `🆔 ID المستخدم: ${orderDetails.userId}\n` +
-                          `📦 نوع الطلب: ${orderDetails.type === 'deposit' ? 'شحن رصيد 💳' : 'طلب خدمة 🎮'}\n` +
-                          (orderDetails.serviceName ? `🎮 الخدمة: ${orderDetails.serviceName}\n` : '') +
-                          `💰 المبلغ: ${orderDetails.amount}$\n` +
-                          (orderDetails.gameId ? `🆔 ID اللعبة: ${orderDetails.gameId}\n` : '') +
-                          `🆔 رقم الطلب: ${orderDetails.orderId}\n` +
-                          `📅 الوقت: ${new Date().toLocaleString('ar-SA')}\n\n` +
-                          `⚡ *أزرار التحكم:*`;
-            
-            const keyboard = {
-                reply_markup: {
-                    inline_keyboard: []
-                }
-            };
-            
-            if (orderDetails.type === 'deposit') {
-                keyboard.reply_markup.inline_keyboard = [
-                    [
-                        { text: '✅ تأكيد الدفع', callback_data: `confirm_deposit_${orderDetails.orderId}` },
-                        { text: '❌ رفض الدفع', callback_data: `reject_deposit_${orderDetails.orderId}` }
-                    ],
-                    [
-                        { text: '💬 مراسلة المستخدم', url: `tg://user?id=${orderDetails.userId}` },
-                        { text: '📊 عرض الإحصائيات', callback_data: 'show_stats' }
-                    ]
-                ];
-                
-                // إرسال الصورة مع الإشعار
-                if (photoId) {
-                    await adminBot.sendPhoto(adminId, photoId, {
-                        caption: message,
-                        parse_mode: 'Markdown',
-                        ...keyboard
-                    });
-                } else {
-                    await adminBot.sendMessage(adminId, message, {
-                        parse_mode: 'Markdown',
-                        ...keyboard
-                    });
-                }
-            } else {
-                keyboard.reply_markup.inline_keyboard = [
-                    [
-                        { text: '✅ إكمال الطلب', callback_data: `complete_${orderDetails.orderId}` },
-                        { text: '❌ إلغاء الطلب', callback_data: `cancel_${orderDetails.orderId}` }
-                    ],
-                    [
-                        { text: '💬 مراسلة المستخدم', url: `tg://user?id=${orderDetails.userId}` },
-                        { text: '📋 عرض جميع الطلبات', callback_data: 'show_all_orders' }
-                    ]
-                ];
-                
-                await adminBot.sendMessage(adminId, message, {
-                    parse_mode: 'Markdown',
-                    ...keyboard
-                });
-            }
-            
-            // إرسال إشعار صوتي
-            try {
-                await adminBot.sendChatAction(adminId, 'typing');
-            } catch (e) {}
-            
-        } catch (error) {
-            console.log(`❌ فشل إرسال إشعار للمسؤول ${adminId}:`, error.message);
-        }
+// ========== تسجيل المستخدمين ==========
+
+function getUser(userId) {
+    if (!users.has(userId)) {
+        users.set(userId, {
+            userId: userId,
+            username: '',
+            balance: 0,
+            isActive: true,
+            lastActive: new Date()
+        });
     }
+    return users.get(userId);
 }
 
-// ========== بوت الشحن - إرسال مباشر للأدمن ==========
+function saveUser(user) {
+    users.set(user.userId, user);
+}
+
+// ========== بوت الشحن - السهل والبسيط ==========
 
 const userActions = new Map();
-let orderCounter = 1;
-let serviceCounter = 1;
-
-// إضافة خدمات افتراضية
-services.set('S1', { id: 'S1', name: 'جواهر فري فاير 100+10', description: 'اشتري 100 جوهرة واحصل على 10 مجاناً', price: 1, stock: 100 });
-services.set('S2', { id: 'S2', name: 'جواهر فري فاير 500+50', description: 'اشتري 500 جوهرة واحصل على 50 مجاناً', price: 5, stock: 50 });
-services.set('S3', { id: 'S3', name: 'جواهر فري فاير 1000+100', description: 'اشتري 1000 جوهرة واحصل على 100 مجاناً', price: 10, stock: 30 });
 
 chargingBot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
     const username = msg.from.username || 'بدون';
     
+    const user = getUser(chatId);
+    user.username = username;
+    saveUser(user);
+    
     try {
-        // إذا كان هناك إجراء قيد الانتظار
-        const action = userActions.get(chatId);
-        if (action) {
-            await handleUserAction(chatId, text, action, msg, username);
-            return;
+        // إذا كان يرسل صورة إيصال
+        if (msg.photo) {
+            const action = userActions.get(chatId);
+            if (action && action.type === 'awaiting_receipt') {
+                await handleDepositReceipt(chatId, msg.photo, action.amount, user);
+                return;
+            }
         }
         
         // الأوامر الرئيسية
         if (text === '/start') {
-            showMainMenu(chatId);
+            showMainMenu(chatId, user);
         } else if (text === '💳 شحن رصيد') {
             startDepositProcess(chatId);
-        } else if (text === '🎮 الخدمات') {
-            showServicesMenu(chatId);
-        } else if (text === '📋 طلباتي') {
-            showUserOrders(chatId);
         } else if (text === '💰 رصيدي') {
-            showBalance(chatId);
-        } else if (text === '🏠 القائمة الرئيسية') {
-            showMainMenu(chatId);
-        } else if (text === '📢 قناة البوت') {
-            showChannelInfo(chatId);
+            showBalance(chatId, user);
+        } else if (text === '📋 طلباتي') {
+            showMyRequests(chatId);
+        } else if (text === '🏠 الرئيسية') {
+            showMainMenu(chatId, user);
         } else if (text === 'ℹ️ المساعدة') {
-            showHelpInfo(chatId);
+            showHelp(chatId);
         } else {
-            showMainMenu(chatId);
+            // إذا كتب مبلغ مباشرة
+            const amount = parseFloat(text);
+            if (!isNaN(amount) && amount > 0) {
+                await handleDepositAmount(chatId, amount, user);
+            } else {
+                showMainMenu(chatId, user);
+            }
         }
     } catch (error) {
-        console.error('❌ خطأ في بوت الشحن:', error);
+        console.error('خطأ في بوت الشحن:', error);
         chargingBot.sendMessage(chatId, '❌ حدث خطأ، يرجى المحاولة لاحقاً');
     }
 });
 
-function showMainMenu(chatId) {
+function showMainMenu(chatId, user) {
     const keyboard = {
         reply_markup: {
             keyboard: [
-                ['💳 شحن رصيد', '🎮 الخدمات'],
-                ['📋 طلباتي', '💰 رصيدي'],
-                ['👥 التسويق', 'ℹ️ المساعدة'],
-                ['📢 قناة البوت']
+                ['💳 شحن رصيد', '💰 رصيدي'],
+                ['📋 طلباتي', 'ℹ️ المساعدة']
             ],
             resize_keyboard: true
         }
     };
     
-    chargingBot.sendMessage(chatId, '🎮 *مرحباً بك في بوت الشحن*\n\nاختر من القائمة:', {
+    const message = `🎮 *بوت الشحن*\n\n💰 رصيدك: ${user.balance}$\n\nاختر من القائمة:`;
+    
+    chargingBot.sendMessage(chatId, message, {
         parse_mode: 'Markdown',
         ...keyboard
     });
@@ -168,198 +111,135 @@ function showMainMenu(chatId) {
 
 function startDepositProcess(chatId) {
     chargingBot.sendMessage(chatId, 
-        '💳 *شحن الرصيد*\n\nالرجاء إدخال المبلغ الذي تريد شحنه (بالدولار):\nمثال: 5', 
+        '💳 *شحن الرصيد*\n\nأرسل المبلغ الذي تريد شحنه (بالدولار):\nمثال: 5', 
         { 
             parse_mode: 'Markdown',
             reply_markup: { remove_keyboard: true }
         }
     );
-    userActions.set(chatId, { type: 'awaiting_deposit_amount' });
 }
 
-function showServicesMenu(chatId) {
-    let message = '🎮 *الخدمات المتاحة:*\n\n';
-    services.forEach(service => {
-        message += `📦 ${service.name}\n💰 ${service.price}$\n📝 ${service.description}\n\n`;
-    });
-    
-    const keyboard = {
-        reply_markup: {
-            keyboard: Array.from(services.values()).map(s => [`🎮 ${s.name}`]),
-            resize_keyboard: true
-        }
-    };
+async function handleDepositAmount(chatId, amount, user) {
+    const message = `💰 *طلب شحن*\n\n💵 المبلغ: ${amount}$\n\n📋 *طريقة الدفع:*\n1. قم بتحويل ${amount}$ إلى:\nID: ${PAYMENT_ID}\n\n2. بعد التحويل، أرسل صورة إيصال الدفع هنا\n\n⚠️ *ملاحظة:*\n- سيتم التحقق من الإيصال\n- قد يستغرق التحقق بضع دقائق`;
     
     chargingBot.sendMessage(chatId, message, {
-        parse_mode: 'Markdown',
-        ...keyboard
+        parse_mode: 'Markdown'
     });
     
-    userActions.set(chatId, { type: 'awaiting_service_selection' });
+    userActions.set(chatId, { type: 'awaiting_receipt', amount });
 }
 
-async function handleUserAction(chatId, text, action, msg, username) {
-    try {
-        switch(action.type) {
-            case 'awaiting_deposit_amount':
-                const amount = parseFloat(text);
-                if (isNaN(amount) || amount <= 0) {
-                    chargingBot.sendMessage(chatId, '❌ قيمة غير صحيحة. الرجاء إدخال رقم صحيح أكبر من 0');
-                    return;
-                }
-                
-                const depositMessage = `💰 *طلب شحن رصيد*\n\n💵 المبلغ: ${amount}$\n\n📋 *تعليمات الدفع:*\n1. قم بتحويل ${amount}$ إلى:\nID: ${PAYMENT_ID}\n2. بعد التحويل، أرسل صورة إيصال الدفع هنا`;
-                
-                chargingBot.sendMessage(chatId, depositMessage, {
-                    parse_mode: 'Markdown'
-                });
-                
-                userActions.set(chatId, { type: 'awaiting_deposit_receipt', amount, username });
-                break;
-                
-            case 'awaiting_service_selection':
-                const serviceName = text.replace('🎮 ', '');
-                const service = Array.from(services.values()).find(s => s.name === serviceName);
-                
-                if (!service) {
-                    chargingBot.sendMessage(chatId, '❌ الخدمة غير متوفرة');
-                    userActions.delete(chatId);
-                    showMainMenu(chatId);
-                    return;
-                }
-                
-                chargingBot.sendMessage(chatId, 
-                    `🎮 *${service.name}*\n\n💰 السعر: ${service.price}$\n📝 ${service.description}\n\n🆔 *الرجاء إرسال ID الخاص بك في اللعبة:*`, 
-                    { 
-                        parse_mode: 'Markdown',
-                        reply_markup: { remove_keyboard: true }
-                    }
-                );
-                
-                userActions.set(chatId, { 
-                    type: 'awaiting_game_id', 
-                    service, 
-                    username 
-                });
-                break;
-                
-            case 'awaiting_game_id':
-                const gameId = text.trim();
-                if (!gameId) {
-                    chargingBot.sendMessage(chatId, '❌ يرجى إدخال ID صحيح');
-                    return;
-                }
-                
-                // إنشاء طلب الخدمة
-                const serviceOrder = {
-                    orderId: `SVC${orderCounter++}`,
-                    userId: chatId,
-                    username: action.username,
-                    type: 'service',
-                    serviceName: action.service.name,
-                    amount: action.service.price,
-                    gameId: gameId,
-                    createdAt: new Date()
-                };
-                
-                orders.set(serviceOrder.orderId, serviceOrder);
-                
-                // إرسال إشعار مباشر للأدمن
-                await sendOrderNotificationToAdmins(serviceOrder);
-                
-                // تأكيد للمستخدم
-                chargingBot.sendMessage(chatId,
-                    `✅ *تم تقديم طلبك*\n\n🎮 الخدمة: ${action.service.name}\n💰 المبلغ: ${action.service.price}$\n🆔 رقم الطلب: ${serviceOrder.orderId}\n🎮 ID اللعبة: ${gameId}\n\n📞 سيتم معالجة طلبك خلال 24 ساعة`,
-                    { parse_mode: 'Markdown' }
-                );
-                
-                userActions.delete(chatId);
-                showMainMenu(chatId);
-                break;
-        }
-        
-        // معالجة صورة الإيصال
-        if (action.type === 'awaiting_deposit_receipt' && msg.photo) {
-            const photoId = msg.photo[msg.photo.length - 1].file_id;
-            
-            // إنشاء طلب الشحن
-            const depositOrder = {
-                orderId: `DEP${orderCounter++}`,
-                userId: chatId,
-                username: action.username,
-                type: 'deposit',
-                amount: action.amount,
-                createdAt: new Date()
-            };
-            
-            orders.set(depositOrder.orderId, depositOrder);
-            
-            // إرسال إشعار مباشر للأدمن مع الصورة
-            await sendOrderNotificationToAdmins(depositOrder, photoId);
-            
-            // تأكيد للمستخدم
-            chargingBot.sendMessage(chatId,
-                `✅ *تم استلام إيصال الدفع*\n\n💰 المبلغ: ${action.amount}$\n🆔 رقم الطلب: ${depositOrder.orderId}\n\n📞 سيتم مراجعة طلبك من قبل الإدارة قريباً`,
-                { parse_mode: 'Markdown' }
-            );
-            
-            userActions.delete(chatId);
-            showMainMenu(chatId);
-        }
-    } catch (error) {
-        console.error('❌ خطأ في معالجة إجراء المستخدم:', error);
-        chargingBot.sendMessage(chatId, '❌ حدث خطأ أثناء المعالجة');
-        userActions.delete(chatId);
-        showMainMenu(chatId);
-    }
-}
-
-function showUserOrders(chatId) {
-    const userOrders = Array.from(orders.values()).filter(o => o.userId === chatId);
+async function handleDepositReceipt(chatId, photo, amount, user) {
+    const photoId = photo[photo.length - 1].file_id;
     
-    if (userOrders.length === 0) {
+    // إنشاء طلب شحن
+    const requestId = `REQ${requestCounter++}`;
+    const depositRequest = {
+        requestId,
+        userId: chatId,
+        username: user.username,
+        amount,
+        photoId,
+        status: 'pending',
+        createdAt: new Date()
+    };
+    
+    depositRequests.set(requestId, depositRequest);
+    
+    // إرسال للأدمن
+    await sendDepositToAdmin(depositRequest);
+    
+    // تأكيد للمستخدم
+    chargingBot.sendMessage(chatId,
+        `✅ *تم استلام إيصال الدفع*\n\n💰 المبلغ: ${amount}$\n🆔 رقم الطلب: ${requestId}\n\n⏳ *جاري مراجعة طلبك من قبل الإدارة...*`,
+        { parse_mode: 'Markdown' }
+    );
+    
+    userActions.delete(chatId);
+    showMainMenu(chatId, user);
+}
+
+function showBalance(chatId, user) {
+    chargingBot.sendMessage(chatId,
+        `💰 *رصيدك*\n\n💵 الرصيد الحالي: ${user.balance}$\n\nلشحن رصيد اضغط على "شحن رصيد"`,
+        { parse_mode: 'Markdown' }
+    );
+}
+
+function showMyRequests(chatId) {
+    const myRequests = Array.from(depositRequests.values())
+        .filter(req => req.userId === chatId)
+        .slice(-5);
+    
+    if (myRequests.length === 0) {
         chargingBot.sendMessage(chatId, '📭 *لا توجد طلبات سابقة*', {
             parse_mode: 'Markdown'
         });
         return;
     }
     
-    let message = '📋 *طلباتك:*\n\n';
+    let message = '📋 *طلباتك الأخيرة:*\n\n';
     
-    userOrders.forEach(order => {
-        const status = order.status === 'completed' ? '✅ مكتمل' :
-                     order.status === 'cancelled' ? '❌ ملغى' :
-                     order.status === 'waiting_payment' ? '💳 بانتظار الدفع' : '⏳ قيد الانتظار';
+    myRequests.forEach(req => {
+        const status = req.status === 'confirmed' ? '✅ مكتمل' :
+                     req.status === 'cancelled' ? '❌ ملغى' : '⏳ قيد المراجعة';
         
-        message += `📦 ${order.serviceName || 'شحن رصيد'}\n`;
-        message += `💰 ${order.amount}$\n`;
-        message += `🆔 ${order.orderId}\n`;
-        message += `📅 ${order.createdAt.toLocaleDateString('ar-SA')}\n`;
+        message += `💰 ${req.amount}$\n`;
+        message += `🆔 ${req.requestId}\n`;
+        message += `📅 ${req.createdAt.toLocaleDateString('ar-SA')}\n`;
         message += `🔄 ${status}\n\n`;
     });
     
     chargingBot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
 }
 
-function showBalance(chatId) {
-    chargingBot.sendMessage(chatId, '💰 *رصيدك*\n\n💵 يمكنك شحن رصيد عبر زر "شحن رصيد"', {
-        parse_mode: 'Markdown'
-    });
+function showHelp(chatId) {
+    chargingBot.sendMessage(chatId,
+        'ℹ️ *مركز المساعدة*\n\n📞 للتواصل: @Diamouffbot\n\n💰 *طريقة الشحن:*\n1. اضغط على "شحن رصيد"\n2. أدخل المبلغ\n3. أرسل صورة الإيصال\n4. انتظر تأكيد الإدارة',
+        { parse_mode: 'Markdown' }
+    );
 }
 
-function showChannelInfo(chatId) {
-    chargingBot.sendMessage(chatId, '📢 *قناة البوت*\n\n@otzhabot', {
-        parse_mode: 'Markdown'
-    });
+// ========== إرسال طلب الشحن للأدمن ==========
+
+async function sendDepositToAdmin(depositRequest) {
+    const admins = [ADMIN_ID, SECOND_ADMIN_ID];
+    
+    const message = `💳 *طلب شحن جديد*\n\n👤 المستخدم: @${depositRequest.username || 'بدون'}\n🆔 ID: ${depositRequest.userId}\n💰 المبلغ: ${depositRequest.amount}$\n🆔 رقم الطلب: ${depositRequest.requestId}\n📅 الوقت: ${depositRequest.createdAt.toLocaleString('ar-SA')}`;
+    
+    const keyboard = {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { 
+                        text: '✅ تأكيد الدفع', 
+                        callback_data: `confirm_${depositRequest.requestId}` 
+                    },
+                    { 
+                        text: '❌ إلغاء الطلب', 
+                        callback_data: `cancel_${depositRequest.requestId}` 
+                    }
+                ]
+            ]
+        }
+    };
+    
+    for (const adminId of admins) {
+        try {
+            await adminBot.sendPhoto(adminId, depositRequest.photoId, {
+                caption: message,
+                parse_mode: 'Markdown',
+                ...keyboard
+            });
+            
+            console.log(`📨 تم إرسال طلب ${depositRequest.requestId} إلى الأدمن ${adminId}`);
+        } catch (error) {
+            console.error(`❌ فشل إرسال إلى الأدمن ${adminId}:`, error.message);
+        }
+    }
 }
 
-function showHelpInfo(chatId) {
-    chargingBot.sendMessage(chatId, 'ℹ️ *المساعدة*\n\nللتواصل: @Diamouffbot', {
-        parse_mode: 'Markdown'
-    });
-}
-
-// ========== بوت الإدارة - استقبال مباشر للطلبات ==========
+// ========== بوت الإدارة - البسيط ==========
 
 adminBot.on('message', async (msg) => {
     const chatId = msg.chat.id;
@@ -372,45 +252,43 @@ adminBot.on('message', async (msg) => {
     }
     
     try {
-        if (text === '/start') {
-            showAdminDashboard(chatId);
+        if (text === '/start' || text === '🏠 الرئيسية') {
+            showAdminMainMenu(chatId);
         } else if (text === '📊 الإحصائيات') {
-            await showStatistics(chatId);
-        } else if (text === '📋 جميع الطلبات') {
-            await showAllOrders(chatId);
-        } else if (text === '💰 طلبات الشحن') {
-            await showDepositOrders(chatId);
-        } else if (text === '🔄 تحديث') {
-            showAdminDashboard(chatId);
-        } else if (text === '📢 إرسال إشعار') {
-            adminBot.sendMessage(chatId, '📢 *إرسال إشعار*\n\nأرسل الرسالة:', {
-                parse_mode: 'Markdown'
+            showAdminStatistics(chatId);
+        } else if (text === '📋 الطلبات المعلقة') {
+            showPendingRequests(chatId);
+        } else if (text === '👤 إضافة رصيد') {
+            adminBot.sendMessage(chatId, '💰 *إضافة رصيد*\n\nأرسل المبلغ:', {
+                parse_mode: 'Markdown',
+                reply_markup: { remove_keyboard: true }
             });
         } else {
-            showAdminDashboard(chatId);
+            showAdminMainMenu(chatId);
         }
     } catch (error) {
-        console.error('❌ خطأ في بوت الإدارة:', error);
+        console.error('خطأ في بوت الإدارة:', error);
         adminBot.sendMessage(chatId, '❌ حدث خطأ أثناء المعالجة');
     }
 });
 
-function showAdminDashboard(chatId) {
-    const pendingOrders = Array.from(orders.values()).filter(o => !o.status || o.status === 'pending').length;
-    const depositOrders = Array.from(orders.values()).filter(o => o.type === 'deposit' && (!o.status || o.status === 'waiting_payment')).length;
+function showAdminMainMenu(chatId) {
+    const pendingCount = Array.from(depositRequests.values())
+        .filter(req => req.status === 'pending').length;
+    
+    const totalUsers = users.size;
     
     const keyboard = {
         reply_markup: {
             keyboard: [
-                ['📊 الإحصائيات', '📋 جميع الطلبات'],
-                ['💰 طلبات الشحن', '📢 إرسال إشعار'],
-                ['🔄 تحديث']
+                ['📊 الإحصائيات', '📋 الطلبات المعلقة'],
+                ['👤 إضافة رصيد', '🏠 الرئيسية']
             ],
             resize_keyboard: true
         }
     };
     
-    const message = `👑 *لوحة التحكم*\n\n📊 إحصائيات فورية:\n📦 الطلبات المعلقة: ${pendingOrders}\n💳 طلبات الشحن: ${depositOrders}\n👥 إجمالي الطلبات: ${orders.size}\n\n🔔 *جميع الطلبات الجديدة تصل هنا تلقائياً!*`;
+    const message = `👑 *لوحة التحكم*\n\n📊 إحصائيات سريعة:\n📦 الطلبات المعلقة: ${pendingCount}\n👥 المستخدمين: ${totalUsers}\n\n🔔 *كل طلبات الشحن تصل هنا تلقائياً مع زرين فقط:*\n✅ تأكيد الدفع - ❌ إلغاء الطلب`;
     
     adminBot.sendMessage(chatId, message, {
         parse_mode: 'Markdown',
@@ -418,156 +296,126 @@ function showAdminDashboard(chatId) {
     });
 }
 
-async function showStatistics(chatId) {
-    const totalOrders = orders.size;
-    const depositOrders = Array.from(orders.values()).filter(o => o.type === 'deposit').length;
-    const serviceOrders = Array.from(orders.values()).filter(o => o.type === 'service').length;
-    const completedOrders = Array.from(orders.values()).filter(o => o.status === 'completed').length;
+function showAdminStatistics(chatId) {
+    const totalRequests = depositRequests.size;
+    const confirmedRequests = Array.from(depositRequests.values())
+        .filter(req => req.status === 'confirmed').length;
+    const cancelledRequests = Array.from(depositRequests.values())
+        .filter(req => req.status === 'cancelled').length;
+    const pendingRequests = totalRequests - confirmedRequests - cancelledRequests;
     
-    const message = `📊 *إحصائيات النظام*\n\n📦 إجمالي الطلبات: ${totalOrders}\n💳 طلبات الشحن: ${depositOrders}\n🎮 طلبات الخدمات: ${serviceOrders}\n✅ المكتملة: ${completedOrders}\n⏳ المعلقة: ${totalOrders - completedOrders}`;
+    const totalAmount = Array.from(depositRequests.values())
+        .filter(req => req.status === 'confirmed')
+        .reduce((sum, req) => sum + req.amount, 0);
+    
+    const message = `📊 *إحصائيات النظام*\n\n📦 إجمالي الطلبات: ${totalRequests}\n✅ المؤكدة: ${confirmedRequests}\n❌ الملغاة: ${cancelledRequests}\n⏳ المعلقة: ${pendingRequests}\n💰 إجمالي المشحون: ${totalAmount}$\n👥 المستخدمين: ${users.size}`;
     
     adminBot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
 }
 
-async function showAllOrders(chatId) {
-    const allOrders = Array.from(orders.values());
+function showPendingRequests(chatId) {
+    const pendingRequests = Array.from(depositRequests.values())
+        .filter(req => req.status === 'pending');
     
-    if (allOrders.length === 0) {
-        adminBot.sendMessage(chatId, '📭 *لا توجد طلبات*', { parse_mode: 'Markdown' });
+    if (pendingRequests.length === 0) {
+        adminBot.sendMessage(chatId, '📭 *لا توجد طلبات معلقة*', {
+            parse_mode: 'Markdown'
+        });
         return;
     }
     
-    for (const order of allOrders.slice(-10).reverse()) {
-        const status = order.status === 'completed' ? '✅' :
-                     order.status === 'cancelled' ? '❌' :
-                     order.type === 'deposit' ? '💳' : '🎮';
-        
-        const message = `${status} *${order.serviceName || 'شحن رصيد'}*\n👤 @${order.username || 'بدون'}\n💰 ${order.amount}$\n🆔 ${order.orderId}\n📅 ${order.createdAt.toLocaleString('ar-SA')}`;
-        
-        adminBot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-    }
+    let message = `📋 *الطلبات المعلقة (${pendingRequests.length})*\n\n`;
+    
+    pendingRequests.forEach(req => {
+        message += `💰 ${req.amount}$\n👤 @${req.username || 'بدون'}\n🆔 ${req.requestId}\n📅 ${req.createdAt.toLocaleDateString('ar-SA')}\n\n`;
+    });
+    
+    adminBot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
 }
 
-async function showDepositOrders(chatId) {
-    const depositOrders = Array.from(orders.values()).filter(o => o.type === 'deposit');
-    
-    if (depositOrders.length === 0) {
-        adminBot.sendMessage(chatId, '💳 *لا توجد طلبات شحن*', { parse_mode: 'Markdown' });
-        return;
-    }
-    
-    for (const order of depositOrders.slice(-10).reverse()) {
-        const message = `💳 *طلب شحن*\n👤 @${order.username || 'بدون'}\n💰 ${order.amount}$\n🆔 ${order.orderId}\n📅 ${order.createdAt.toLocaleString('ar-SA')}`;
-        
-        adminBot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-    }
-}
-
-// ========== معالجة Callback Queries للأدمن ==========
+// ========== معالجة زر التاكيد والإلغاء ==========
 
 adminBot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
     const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
     
     try {
-        if (data.startsWith('confirm_deposit_')) {
-            const orderId = data.split('_')[2];
-            const order = orders.get(orderId);
+        if (data.startsWith('confirm_')) {
+            const requestId = data.split('_')[1];
+            const request = depositRequests.get(requestId);
             
-            if (order) {
-                order.status = 'completed';
-                
-                // إعلام المستخدم
-                try {
-                    await chargingBot.sendMessage(order.userId,
-                        `✅ *تم تأكيد شحن الرصيد*\n\n💰 ${order.amount}$\n💳 تم إضافة المبلغ إلى رصيدك\n🆔 ${order.orderId}`,
-                        { parse_mode: 'Markdown' }
-                    );
-                } catch (e) {}
-                
-                adminBot.answerCallbackQuery(callbackQuery.id, { text: 'تم تأكيد الدفع' });
-                adminBot.editMessageText(`✅ تم تأكيد شحن ${order.amount}$ للمستخدم @${order.username || order.userId}`, {
-                    chat_id: chatId,
-                    message_id: callbackQuery.message.message_id
-                });
+            if (!request) {
+                adminBot.answerCallbackQuery(callbackQuery.id, { text: 'الطلب غير موجود' });
+                return;
             }
             
-        } else if (data.startsWith('reject_deposit_')) {
-            const orderId = data.split('_')[2];
-            const order = orders.get(orderId);
+            // تحديث حالة الطلب
+            request.status = 'confirmed';
             
-            if (order) {
-                order.status = 'cancelled';
-                
-                // إعلام المستخدم
-                try {
-                    await chargingBot.sendMessage(order.userId,
-                        `❌ *لم يتم تأكيد الدفع*\n\n💰 ${order.amount}$\n🆔 ${order.orderId}\n\nالرجاء التحقق والمحاولة مرة أخرى`,
-                        { parse_mode: 'Markdown' }
-                    );
-                } catch (e) {}
-                
-                adminBot.answerCallbackQuery(callbackQuery.id, { text: 'تم رفض الدفع' });
-                adminBot.editMessageText(`❌ تم رفض شحن ${order.amount}$`, {
-                    chat_id: chatId,
-                    message_id: callbackQuery.message.message_id
-                });
+            // زيادة رصيد المستخدم
+            const user = getUser(request.userId);
+            user.balance += request.amount;
+            saveUser(user);
+            
+            // إعلام المستخدم
+            try {
+                await chargingBot.sendMessage(request.userId,
+                    `✅ *تم تأكيد شحن الرصيد*\n\n💰 المبلغ: ${request.amount}$\n💳 تم إضافة المبلغ إلى رصيدك\n💵 رصيدك الجديد: ${user.balance}$\n🆔 رقم الطلب: ${request.requestId}\n\nشكراً لاستخدامك خدماتنا!`,
+                    { parse_mode: 'Markdown' }
+                );
+            } catch (e) {
+                console.error('فشل إرسال إشعار للمستخدم:', e.message);
             }
             
-        } else if (data.startsWith('complete_')) {
-            const orderId = data.split('_')[1];
-            const order = orders.get(orderId);
+            adminBot.answerCallbackQuery(callbackQuery.id, { text: 'تم تأكيد الدفع وإضافة الرصيد' });
             
-            if (order) {
-                order.status = 'completed';
-                
-                // إعلام المستخدم
-                try {
-                    await chargingBot.sendMessage(order.userId,
-                        `✅ *تم إكمال طلبك*\n\n🎮 ${order.serviceName}\n💰 ${order.amount}$\n🆔 ${order.orderId}\n\nشكراً لاستخدامك خدماتنا!`,
-                        { parse_mode: 'Markdown' }
-                    );
-                } catch (e) {}
-                
-                adminBot.answerCallbackQuery(callbackQuery.id, { text: 'تم إكمال الطلب' });
-                adminBot.editMessageText(`✅ تم إكمال الطلب ${orderId}`, {
+            // تحديث رسالة الأدمن
+            adminBot.editMessageCaption(
+                `✅ *تم تأكيد الدفع*\n\n👤 @${request.username || 'بدون'}\n💰 ${request.amount}$\n💳 تم إضافة الرصيد للمستخدم\n⏰ ${new Date().toLocaleString('ar-SA')}`,
+                {
                     chat_id: chatId,
-                    message_id: callbackQuery.message.message_id
-                });
-            }
+                    message_id: messageId,
+                    parse_mode: 'Markdown'
+                }
+            );
             
         } else if (data.startsWith('cancel_')) {
-            const orderId = data.split('_')[1];
-            const order = orders.get(orderId);
+            const requestId = data.split('_')[1];
+            const request = depositRequests.get(requestId);
             
-            if (order) {
-                order.status = 'cancelled';
-                
-                // إعلام المستخدم
-                try {
-                    await chargingBot.sendMessage(order.userId,
-                        `❌ *تم إلغاء طلبك*\n\n🎮 ${order.serviceName}\n💰 ${order.amount}$\n🆔 ${order.orderId}`,
-                        { parse_mode: 'Markdown' }
-                    );
-                } catch (e) {}
-                
-                adminBot.answerCallbackQuery(callbackQuery.id, { text: 'تم إلغاء الطلب' });
-                adminBot.editMessageText(`❌ تم إلغاء الطلب ${orderId}`, {
-                    chat_id: chatId,
-                    message_id: callbackQuery.message.message_id
-                });
+            if (!request) {
+                adminBot.answerCallbackQuery(callbackQuery.id, { text: 'الطلب غير موجود' });
+                return;
             }
             
-        } else if (data === 'show_stats') {
-            await showStatistics(chatId);
-            adminBot.answerCallbackQuery(callbackQuery.id);
+            // تحديث حالة الطلب
+            request.status = 'cancelled';
             
-        } else if (data === 'show_all_orders') {
-            await showAllOrders(chatId);
-            adminBot.answerCallbackQuery(callbackQuery.id);
+            // إعلام المستخدم
+            try {
+                await chargingBot.sendMessage(request.userId,
+                    `❌ *فشل التحويل*\n\n💰 المبلغ: ${request.amount}$\n🆔 رقم الطلب: ${request.requestId}\n\nالرجاء التحقق من الإيصال والمحاولة مرة أخرى أو التواصل مع الدعم`,
+                    { parse_mode: 'Markdown' }
+                );
+            } catch (e) {
+                console.error('فشل إرسال إشعار للمستخدم:', e.message);
+            }
+            
+            adminBot.answerCallbackQuery(callbackQuery.id, { text: 'تم إلغاء الطلب' });
+            
+            // تحديث رسالة الأدمن
+            adminBot.editMessageCaption(
+                `❌ *تم إلغاء الطلب*\n\n👤 @${request.username || 'بدون'}\n💰 ${request.amount}$\n⏰ ${new Date().toLocaleString('ar-SA')}`,
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown'
+                }
+            );
         }
     } catch (error) {
-        console.error('❌ خطأ في معالجة Callback:', error);
+        console.error('خطأ في معالجة Callback:', error);
         adminBot.answerCallbackQuery(callbackQuery.id, { text: 'حدث خطأ' });
     }
 });
@@ -576,18 +424,16 @@ adminBot.on('callback_query', async (callbackQuery) => {
 
 console.log('🚀 بدء تشغيل نظام البوتات...');
 console.log('🤖 بوت الشحن: @Diamouffbot');
-console.log('👑 بوت الإدارة: @otzhabot');
-console.log('👤 المسؤول الرئيسي: ' + ADMIN_ID);
-console.log('👤 المسؤول الثاني: ' + SECOND_ADMIN_ID);
+console.log('👑 بوت التحكم: @otzhabot');
 console.log('✅ النظام يعمل بنجاح!');
-console.log('🔔 جميع الطلبات ستصل مباشرة إلى لوحة التحكم!');
+console.log('🔔 كل طلب شحن يصل للأدمن مع زرين فقط: تأكيد ❌ إلغاء');
 
-// إضافة هذا الجزء للنشر على Render
+// للنشر على Render
 const PORT = process.env.PORT || 3000;
 const http = require('http');
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot system is running! All orders go directly to admin panel.');
+    res.end('Charging Bot System - Simple Admin Panel');
 });
 
 server.listen(PORT, () => {
