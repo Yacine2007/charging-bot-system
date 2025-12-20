@@ -1,4 +1,4 @@
-const TelegramBot = require('node-tegram-bot-api');
+const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const path = require('path');
 
@@ -284,31 +284,6 @@ function updateOrderStatus(orderId, status, adminId = null, notes = '') {
     return order;
 }
 
-// ========== وظيفة تحميل الصورة وتحويلها ==========
-async function downloadAndSavePhoto(fileId, orderId) {
-    try {
-        const filePath = await chargingBot.getFile(fileId);
-        const downloadUrl = `https://api.telegram.org/file/bot${CHARGING_BOT_TOKEN}/${filePath.file_path}`;
-        
-        // حفظ الصورة محلياً (اختياري)
-        const receiptFilename = `receipt_${orderId}_${Date.now()}.jpg`;
-        const receiptPath = path.join(RECEIPTS_DIR, receiptFilename);
-        
-        // يمكن إضافة حفظ محلي إذا لزم الأمر
-        // const response = await axios.get(downloadUrl, { responseType: 'stream' });
-        // response.data.pipe(fs.createWriteStream(receiptPath));
-        
-        return {
-            fileId: fileId,
-            downloadUrl: downloadUrl,
-            receiptPath: receiptPath
-        };
-    } catch (error) {
-        console.error('❌ خطأ في تحميل الصورة:', error);
-        return { fileId: fileId, error: error.message };
-    }
-}
-
 // ========== بوت المستخدمين (@Diamouffbot) ==========
 
 chargingBot.onText(/\/start/, (msg) => {
@@ -386,7 +361,7 @@ chargingBot.on('message', async (msg) => {
     }
 });
 
-// إضافة معالج للصور مباشرة
+// معالج الصور - متى ما أرسل المستخدم صورة
 chargingBot.on('photo', async (msg) => {
     const chatId = msg.chat.id;
     const session = userSessions[chatId];
@@ -661,18 +636,10 @@ async function handleDepositReceipt(chatId, msg, session) {
             paymentProof: photoId
         });
         
-        // تحميل الصورة وحفظ معلوماتها
-        const photoInfo = await downloadAndSavePhoto(photoId, order.orderId);
-        
-        // تحديث الطلب بمعلومات الصورة
-        order.receiptPath = photoInfo.receiptPath;
-        orders[order.orderId] = order;
-        saveData();
-        
-        // إرسال الإشعار للإدارة مع الصورة
-        await sendDepositNotification(order, photoId);
-        
         userSessions[chatId] = null;
+        
+        // إرسال الإشعار للإدارة مع الصورة مباشرة
+        await sendDepositNotification(order, msg);
         
         chargingBot.sendMessage(chatId,
             `✅ *تم استلام إيصال الدفع بنجاح!*\n\n` +
@@ -844,35 +811,38 @@ async function sendOrderNotification(order) {
     }
 }
 
-async function sendDepositNotification(order, photoId) {
+async function sendDepositNotification(order, msg) {
     const admins = [ADMIN_ID, SECOND_ADMIN_ID];
     
-    const message = `💳 *طلب شحن رصيد جديد*\n\n` +
-                   `👤 ${order.firstName || '@' + order.username}\n` +
-                   `🆔 \`${order.userId}\`\n` +
-                   `💰 *${order.amount}$*\n` +
-                   `🆔 ${order.orderId}\n` +
-                   `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}\n\n` +
-                   `🔍 *مراجعة الإيصال المرفق:*`;
-    
-    const keyboard = {
-        inline_keyboard: [
-            [
-                { text: '✅ تأكيد الدفع', callback_data: `confirm_deposit_${order.orderId}` },
-                { text: '❌ رفض الدفع', callback_data: `reject_deposit_${order.orderId}` }
-            ],
-            [
-                { text: '🔍 تحت المراجعة', callback_data: `review_deposit_${order.orderId}` },
-                { text: '📝 إرسال ملاحظة', callback_data: `note_deposit_${order.orderId}` }
-            ]
-        ]
-    };
-    
+    // إعادة توجيه الصورة الأصلية من المستخدم إلى الأدمن مباشرة
     for (const adminId of admins) {
         try {
-            // إرسال الصورة مباشرة إلى بوت الإدارة
-            await chargingBot.sendPhoto(adminId, photoId, {
-                caption: message,
+            // إعادة توجيه الرسالة الأصلية (مع الصورة) إلى الأدمن
+            await chargingBot.forwardMessage(adminId, msg.chat.id, msg.message_id);
+            
+            // إرسال تفاصيل الطلب مع الأزرار
+            const message = `💳 *طلب شحن رصيد جديد*\n\n` +
+                           `👤 ${order.firstName || '@' + order.username}\n` +
+                           `🆔 \`${order.userId}\`\n` +
+                           `💰 *${order.amount}$*\n` +
+                           `🆔 ${order.orderId}\n` +
+                           `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}\n\n` +
+                           `🔍 *الصورة أعلاه هي إيصال الدفع*`;
+            
+            const keyboard = {
+                inline_keyboard: [
+                    [
+                        { text: '✅ تأكيد الدفع', callback_data: `confirm_deposit_${order.orderId}` },
+                        { text: '❌ رفض الدفع', callback_data: `reject_deposit_${order.orderId}` }
+                    ],
+                    [
+                        { text: '🔍 تحت المراجعة', callback_data: `review_deposit_${order.orderId}` },
+                        { text: '📝 إرسال ملاحظة', callback_data: `note_deposit_${order.orderId}` }
+                    ]
+                ]
+            };
+            
+            await adminBot.sendMessage(adminId, message, {
                 parse_mode: 'Markdown',
                 reply_markup: keyboard
             });
@@ -880,15 +850,24 @@ async function sendDepositNotification(order, photoId) {
             console.log(`✅ تم إرسال إيصال ${order.orderId} إلى الأدمن ${adminId}`);
             
         } catch (error) {
-            console.error(`❌ فشل إرسال إيصال للإدمن ${adminId}:`, error.message);
+            console.error(`❌ فشل إرسال إيصال للأدمن ${adminId}:`, error.message);
             
-            // محاولة إرسال الرسالة بدون صورة كبديل
+            // محاولة بديلة: نسخ الصورة يدوياً
             try {
-                await adminBot.sendMessage(adminId, 
-                    message + '\n\n⚠️ *لم يتم إرسال الصورة*\n' +
-                    `📸 File ID: ${photoId.substring(0, 20)}...`,
-                    { parse_mode: 'Markdown' }
-                );
+                const photoId = msg.photo[msg.photo.length - 1].file_id;
+                
+                const message = `💳 *طلب شحن رصيد جديد*\n\n` +
+                               `👤 ${order.firstName || '@' + order.username}\n` +
+                               `🆔 \`${order.userId}\`\n` +
+                               `💰 *${order.amount}$*\n` +
+                               `🆔 ${order.orderId}\n` +
+                               `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}\n\n` +
+                               `⚠️ *لم يتم إرسال الصورة، يرجى التواصل مع المستخدم*\n` +
+                               `File ID: ${photoId.substring(0, 30)}...`;
+                
+                await adminBot.sendMessage(adminId, message, {
+                    parse_mode: 'Markdown'
+                });
             } catch (err) {
                 console.error(`❌ فشل إرسال بديل:`, err.message);
             }
