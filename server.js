@@ -1,4 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
+const fs = require('fs');
+const path = require('path');
 
 // === إعداد التوكنات ===
 const CHARGING_BOT_TOKEN = '8223596744:AAGHOMQ3Sjk3-X_Z7eXXnL5drAXaHXglLFg';
@@ -7,62 +9,109 @@ const ADMIN_BOT_TOKEN = '8216188569:AAEEA1q_os_6XfSJrUDLDkkQxZXh-3OMAVU';
 // === إعداد المدراء ===
 const ADMIN_ID = 7656412227;
 const SECOND_ADMIN_ID = 7450109529;
+const PAYMENT_ID = '953936100';
 
-// إنشاء البوتات
-const chargingBot = new TelegramBot(CHARGING_BOT_TOKEN, { 
-    polling: { 
+// === إنشاء البوتات ===
+const chargingBot = new TelegramBot(CHARGING_BOT_TOKEN, {
+    polling: {
         interval: 300,
         autoStart: true,
         params: { timeout: 10 }
-    } 
+    }
 });
 
-const adminBot = new TelegramBot(ADMIN_BOT_TOKEN, { 
-    polling: { 
+const adminBot = new TelegramBot(ADMIN_BOT_TOKEN, {
+    polling: {
         interval: 300,
         autoStart: true,
         params: { timeout: 10 }
-    } 
+    }
 });
 
 // ========== تخزين البيانات ==========
-const users = new Map();
-const services = new Map();
-const orders = new Map();
+const dataDir = path.join(__dirname, 'data');
+
+// إنشاء مجلد البيانات إذا لم يكن موجوداً
+if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir);
+}
+
+let users = new Map();
+let services = new Map();
+let orders = new Map();
 const userStates = new Map();
 const adminStates = new Map();
 
-// ========== تهيئة الخدمات الافتراضية ==========
-function initializeServices() {
-    services.clear();
+// ========== دوال حفظ البيانات ==========
+function saveData() {
+    try {
+        const usersData = Array.from(users.entries());
+        const servicesData = Array.from(services.entries());
+        const ordersData = Array.from(orders.entries());
+        
+        fs.writeFileSync(path.join(dataDir, 'users.json'), JSON.stringify(usersData, null, 2));
+        fs.writeFileSync(path.join(dataDir, 'services.json'), JSON.stringify(servicesData, null, 2));
+        fs.writeFileSync(path.join(dataDir, 'orders.json'), JSON.stringify(ordersData, null, 2));
+        
+        console.log('✅ تم حفظ البيانات');
+    } catch (error) {
+        console.error('❌ خطأ في حفظ البيانات:', error);
+    }
+}
+
+function loadData() {
+    try {
+        // تحميل المستخدمين
+        if (fs.existsSync(path.join(dataDir, 'users.json'))) {
+            const usersData = JSON.parse(fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8'));
+            users = new Map(usersData);
+            console.log(`✅ تم تحميل ${users.size} مستخدم`);
+        }
+        
+        // تحميل الخدمات
+        if (fs.existsSync(path.join(dataDir, 'services.json'))) {
+            const servicesData = JSON.parse(fs.readFileSync(path.join(dataDir, 'services.json'), 'utf8'));
+            services = new Map(servicesData);
+            console.log(`✅ تم تحميل ${services.size} خدمة`);
+        }
+        
+        // تحميل الطلبات
+        if (fs.existsSync(path.join(dataDir, 'orders.json'))) {
+            const ordersData = JSON.parse(fs.readFileSync(path.join(dataDir, 'orders.json'), 'utf8'));
+            orders = new Map(ordersData);
+            console.log(`✅ تم تحميل ${orders.size} طلب`);
+        }
+    } catch (error) {
+        console.error('❌ خطأ في تحميل البيانات:', error);
+        initializeDefaultData();
+    }
+}
+
+function initializeDefaultData() {
+    console.log('🔄 تهيئة البيانات الافتراضية...');
     
+    // خدمات افتراضية
     const defaultServices = [
-        { id: 'SERV1', name: 'جواهر فري فاير 100+10', description: 'اشتري 100 جوهرة واحصل على 10 مجاناً', price: 1, stock: 100, category: 'جواهر', isActive: true },
-        { id: 'SERV2', name: 'جواهر فري فاير 500+50', description: 'اشتري 500 جوهرة واحصل على 50 مجاناً', price: 5, stock: 50, category: 'جواهر', isActive: true },
-        { id: 'SERV3', name: 'جواهر فري فاير 1000+100', description: 'اشتري 1000 جوهرة واحصل على 100 مجاناً', price: 10, stock: 30, category: 'جواهر', isActive: true },
-        { id: 'SERV4', name: 'باس موسم فري فاير', description: 'اشتراك باس الموسم الكامل', price: 8, stock: 50, category: 'باقات', isActive: true },
-        { id: 'SERV5', name: 'حزمة أسلبة نادرة', description: 'حزمة أسلبة مميزة مع سكنات', price: 15, stock: 25, category: 'أسلبة', isActive: true }
+        { id: 'SERV001', name: 'جواهر فري فاير 100+10', description: 'اشتري 100 جوهرة واحصل على 10 مجاناً', price: 1, stock: 100, category: 'جواهر', isActive: true },
+        { id: 'SERV002', name: 'جواهر فري فاير 500+50', description: 'اشتري 500 جوهرة واحصل على 50 مجاناً', price: 5, stock: 50, category: 'جواهر', isActive: true },
+        { id: 'SERV003', name: 'جواهر فري فاير 1000+100', description: 'اشتري 1000 جوهرة واحصل على 100 مجاناً', price: 10, stock: 30, category: 'جواهر', isActive: true },
+        { id: 'SERV004', name: 'باس موسم فري فاير', description: 'اشتراك باس الموسم الكامل', price: 8, stock: 50, category: 'باقات', isActive: true },
+        { id: 'SERV005', name: 'حزمة أسلبة نادرة', description: 'حزمة أسلبة مميزة مع سكنات', price: 15, stock: 25, category: 'أسلبة', isActive: true }
     ];
     
     defaultServices.forEach(service => {
         services.set(service.id, {
-            id: service.id,
-            name: service.name,
-            description: service.description,
-            price: service.price,
-            stock: service.stock,
-            category: service.category,
-            isActive: service.isActive,
+            ...service,
             createdAt: new Date(),
             priority: services.size + 1
         });
     });
     
     console.log(`✅ تم تهيئة ${services.size} خدمة افتراضية`);
+    saveData();
 }
 
-// ========== دوال إدارة الخدمات المحسنة ==========
-
+// ========== دوال إدارة الخدمات ==========
 function addService(name, description, price, stock, category = 'عام') {
     const serviceId = `SERV${Date.now()}${Math.floor(Math.random() * 1000)}`;
     const service = {
@@ -78,16 +127,16 @@ function addService(name, description, price, stock, category = 'عام') {
     };
     
     services.set(serviceId, service);
-    console.log(`✅ تمت إضافة خدمة: ${name} (${serviceId})`);
+    saveData();
+    console.log(`✅ تمت إضافة خدمة: ${name}`);
     return service;
 }
 
 function updateService(serviceId, updates) {
     const service = services.get(serviceId);
     if (service) {
-        // تحديث الحقول المطلوبة فقط
         Object.keys(updates).forEach(key => {
-            if (key in service) {
+            if (key in service && key !== 'id') {
                 if (key === 'price') {
                     service[key] = parseFloat(updates[key]);
                 } else if (key === 'stock') {
@@ -97,25 +146,20 @@ function updateService(serviceId, updates) {
                 }
             }
         });
-        
         service.updatedAt = new Date();
         services.set(serviceId, service);
-        console.log(`✅ تم تحديث خدمة: ${service.name} (${serviceId})`);
+        saveData();
         return service;
     }
     return null;
 }
 
 function deleteService(serviceId) {
-    const service = services.get(serviceId);
-    if (service) {
-        const deleted = services.delete(serviceId);
-        if (deleted) {
-            console.log(`✅ تم حذف خدمة: ${service.name} (${serviceId})`);
-            return true;
-        }
+    const deleted = services.delete(serviceId);
+    if (deleted) {
+        saveData();
+        return true;
     }
-    console.log(`❌ فشل حذف الخدمة: ${serviceId}`);
     return false;
 }
 
@@ -125,25 +169,737 @@ function toggleServiceStatus(serviceId) {
         service.isActive = !service.isActive;
         service.updatedAt = new Date();
         services.set(serviceId, service);
-        console.log(`✅ تم ${service.isActive ? 'تفعيل' : 'تعطيل'} خدمة: ${service.name}`);
+        saveData();
         return service;
     }
     return null;
 }
 
-// ========== بوت الإدارة المحسن ==========
+// ========== دوال إدارة المستخدمين ==========
+function getUser(userId) {
+    if (!users.has(userId)) {
+        users.set(userId, {
+            userId: userId,
+            username: '',
+            firstName: '',
+            balance: 0,
+            discount: 0,
+            totalSpent: 0,
+            ordersCount: 0,
+            isActive: true,
+            lastActive: new Date(),
+            createdAt: new Date(),
+            language: 'ar'
+        });
+        saveData();
+    }
+    return users.get(userId);
+}
+
+function updateUser(userId, updates) {
+    const user = getUser(userId);
+    Object.assign(user, updates);
+    user.lastActive = new Date();
+    users.set(userId, user);
+    saveData();
+    return user;
+}
+
+// ========== دوال إدارة الطلبات ==========
+let orderCounter = 1;
+
+function createOrder(userId, type, data) {
+    const orderId = type === 'deposit' ? `DEP${orderCounter++}` : `ORD${orderCounter++}`;
+    const order = {
+        orderId: orderId,
+        userId: userId,
+        username: data.username || '',
+        firstName: data.firstName || '',
+        type: type,
+        amount: data.amount,
+        serviceName: data.serviceName || '',
+        gameId: data.gameId || '',
+        paymentProof: data.paymentProof || '',
+        status: type === 'deposit' ? 'pending_payment' : 'pending',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        notes: ''
+    };
+    
+    orders.set(orderId, order);
+    
+    // زيادة عدد طلبات المستخدم
+    const user = getUser(userId);
+    user.ordersCount += 1;
+    updateUser(userId, user);
+    
+    saveData();
+    return order;
+}
+
+function updateOrderStatus(orderId, status, adminId = null) {
+    const order = orders.get(orderId);
+    if (order) {
+        order.status = status;
+        order.updatedAt = new Date();
+        if (adminId) {
+            order.processedBy = adminId;
+            order.processedAt = new Date();
+        }
+        orders.set(orderId, order);
+        saveData();
+        return order;
+    }
+    return null;
+}
+
+// ========== بوت الشحن (واجهة المستخدمين) ==========
+
+chargingBot.onText(/\/start/, async (msg) => {
+    const chatId = msg.chat.id;
+    const username = msg.from.username || '';
+    const firstName = msg.from.first_name || '';
+    
+    console.log(`🎮 مستخدم جديد: ${chatId} (@${username})`);
+    
+    const user = getUser(chatId);
+    updateUser(chatId, { username, firstName });
+    
+    showMainMenu(chatId, user);
+});
+
+chargingBot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const text = msg.text;
+    const user = getUser(chatId);
+    
+    // تحديث نشاط المستخدم
+    updateUser(chatId, {});
+    
+    // الحصول على حالة المستخدم الحالية
+    const userState = userStates.get(chatId);
+    
+    // إذا كان هناك عملية جارية
+    if (userState) {
+        await handleUserState(chatId, text, msg, userState, user);
+        return;
+    }
+    
+    // إذا كان المستخدم يريد إلغاء العملية
+    if (text === '🚫 إلغاء العملية') {
+        userStates.delete(chatId);
+        showMainMenu(chatId, user);
+        return;
+    }
+    
+    // معالجة الأوامر الرئيسية
+    if (!text) return;
+    
+    switch(text) {
+        case '💳 شحن رصيد':
+            startDepositProcess(chatId);
+            break;
+            
+        case '🎮 الخدمات':
+            showServicesMenu(chatId, user);
+            break;
+            
+        case '📋 طلباتي':
+            showUserOrders(chatId);
+            break;
+            
+        case '💰 رصيدي':
+            showBalance(chatId, user);
+            break;
+            
+        case '🏠 الرئيسية':
+            showMainMenu(chatId, user);
+            break;
+            
+        case '🆘 المساعدة':
+            showHelp(chatId);
+            break;
+            
+        default:
+            // التحقق إذا كان اختيار خدمة
+            if (text.startsWith('🎮 ')) {
+                const serviceName = text.replace('🎮 ', '').split(' - ')[0];
+                selectService(chatId, user, serviceName);
+            } else {
+                showMainMenu(chatId, user);
+            }
+    }
+});
+
+// ========== واجهة المستخدم الرئيسية ==========
+
+function showMainMenu(chatId, user) {
+    userStates.delete(chatId);
+    
+    const activeServices = Array.from(services.values()).filter(s => s.isActive).length;
+    
+    const keyboard = {
+        reply_markup: {
+            keyboard: [
+                ['💳 شحن رصيد', '🎮 الخدمات'],
+                ['📋 طلباتي', '💰 رصيدي'],
+                ['🆘 المساعدة', '🏠 الرئيسية']
+            ],
+            resize_keyboard: true
+        }
+    };
+    
+    const message = `🎮 *مرحباً بك في بوت شحن Free Fire*\n\n` +
+                   `👤 ${user.firstName || 'عزيزي المستخدم'}\n` +
+                   `💰 رصيدك: *${user.balance}$*\n` +
+                   `🎯 خصمك: *${user.discount}%*\n` +
+                   `📦 ${activeServices} خدمة متاحة\n\n` +
+                   `📌 *اختر من القائمة:*`;
+    
+    chargingBot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        ...keyboard
+    });
+}
+
+function showServicesMenu(chatId, user) {
+    const activeServices = Array.from(services.values())
+        .filter(s => s.isActive && s.stock > 0)
+        .sort((a, b) => a.priority - b.priority);
+    
+    if (activeServices.length === 0) {
+        chargingBot.sendMessage(chatId,
+            '⚠️ *لا توجد خدمات متاحة حالياً*\n\n' +
+            'يرجى المحاولة لاحقاً أو التواصل مع الدعم.',
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    keyboard: [['🏠 الرئيسية']],
+                    resize_keyboard: true
+                }
+            }
+        );
+        return;
+    }
+    
+    let message = `🎮 *الخدمات المتاحة*\n\n` +
+                 `💰 رصيدك: *${user.balance}$*\n` +
+                 `🎯 خصمك: *${user.discount}%*\n\n` +
+                 `📦 *اختر خدمة:*\n\n`;
+    
+    // تجميع الخدمات حسب التصنيف
+    const servicesByCategory = {};
+    activeServices.forEach(service => {
+        if (!servicesByCategory[service.category]) {
+            servicesByCategory[service.category] = [];
+        }
+        servicesByCategory[service.category].push(service);
+    });
+    
+    // عرض الخدمات
+    Object.keys(servicesByCategory).forEach(category => {
+        message += `📁 *${category}:*\n`;
+        servicesByCategory[category].forEach(service => {
+            const finalPrice = service.price * (1 - (user.discount / 100));
+            message += `🎮 ${service.name}\n`;
+            message += `   💰 ${finalPrice.toFixed(2)}$ | 📦 ${service.stock}\n\n`;
+        });
+    });
+    
+    // إنشاء أزرار الخدمات
+    const keyboardRows = [];
+    activeServices.forEach(service => {
+        const finalPrice = service.price * (1 - (user.discount / 100));
+        keyboardRows.push([`🎮 ${service.name} - ${finalPrice.toFixed(2)}$`]);
+    });
+    
+    keyboardRows.push(['🏠 الرئيسية', '🚫 إلغاء العملية']);
+    
+    const keyboard = {
+        reply_markup: {
+            keyboard: keyboardRows,
+            resize_keyboard: true
+        }
+    };
+    
+    chargingBot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        ...keyboard
+    });
+}
+
+function selectService(chatId, user, serviceName) {
+    const service = Array.from(services.values())
+        .find(s => s.name === serviceName && s.isActive && s.stock > 0);
+    
+    if (!service) {
+        chargingBot.sendMessage(chatId,
+            '❌ *الخدمة غير متاحة*\n\n' +
+            'يرجى اختيار خدمة أخرى.',
+            { parse_mode: 'Markdown' }
+        );
+        showServicesMenu(chatId, user);
+        return;
+    }
+    
+    const finalPrice = service.price * (1 - (user.discount / 100));
+    
+    if (user.balance < finalPrice) {
+        chargingBot.sendMessage(chatId,
+            `❌ *رصيدك غير كافي*\n\n` +
+            `💰 رصيدك: ${user.balance}$\n` +
+            `💵 السعر: ${finalPrice.toFixed(2)}$\n\n` +
+            `💡 يرجى شحن رصيد أولاً.`,
+            { parse_mode: 'Markdown' }
+        );
+        return;
+    }
+    
+    chargingBot.sendMessage(chatId,
+        `🎮 *${service.name}*\n\n` +
+        `📝 ${service.description}\n` +
+        `💰 السعر: *${finalPrice.toFixed(2)}$*\n` +
+        `📦 المخزون: ${service.stock}\n\n` +
+        `🆔 *الرجاء إرسال ID الخاص بك في Free Fire:*`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                keyboard: [['🚫 إلغاء العملية']],
+                resize_keyboard: true
+            }
+        }
+    );
+    
+    userStates.set(chatId, {
+        type: 'awaiting_game_id',
+        serviceId: service.id,
+        serviceName: service.name,
+        price: finalPrice,
+        username: user.username,
+        firstName: user.firstName
+    });
+}
+
+// ========== معالجة حالات المستخدم ==========
+
+async function handleUserState(chatId, text, msg, state, user) {
+    try {
+        // زر الإلغاء يعمل في أي حالة
+        if (text === '🚫 إلغاء العملية' || text === '🏠 الرئيسية') {
+            userStates.delete(chatId);
+            showMainMenu(chatId, user);
+            return;
+        }
+        
+        switch(state.type) {
+            case 'awaiting_deposit_amount':
+                await handleDepositAmount(chatId, text, user);
+                break;
+                
+            case 'awaiting_deposit_receipt':
+                if (msg.photo) {
+                    await handleDepositReceipt(chatId, msg, state, user);
+                } else {
+                    chargingBot.sendMessage(chatId,
+                        '❌ يرجى إرسال صورة إيصال الدفع\n' +
+                        'أو اضغط "🚫 إلغاء العملية" للإلغاء',
+                        { parse_mode: 'Markdown' }
+                    );
+                }
+                break;
+                
+            case 'awaiting_game_id':
+                await handleGameId(chatId, text, state, user);
+                break;
+        }
+    } catch (error) {
+        console.error('❌ خطأ في معالجة حالة المستخدم:', error);
+        chargingBot.sendMessage(chatId, '❌ حدث خطأ، يرجى المحاولة مرة أخرى');
+        userStates.delete(chatId);
+        showMainMenu(chatId, user);
+    }
+}
+
+async function handleGameId(chatId, text, state, user) {
+    const gameId = text.trim();
+    
+    if (!gameId || gameId.length < 3) {
+        chargingBot.sendMessage(chatId,
+            '❌ *ID غير صالح*\n\n' +
+            'الرجاء إدخال ID صحيح (3 أحرف على الأقل)',
+            { parse_mode: 'Markdown' }
+        );
+        return;
+    }
+    
+    // خصم المبلغ من رصيد المستخدم
+    user.balance -= state.price;
+    user.totalSpent += state.price;
+    updateUser(chatId, user);
+    
+    // تحديث مخزون الخدمة
+    const service = services.get(state.serviceId);
+    if (service) {
+        service.stock -= 1;
+        if (service.stock <= 0) {
+            service.isActive = false;
+        }
+        services.set(state.serviceId, service);
+        saveData();
+    }
+    
+    // إنشاء الطلب
+    const order = createOrder(chatId, 'service', {
+        username: state.username,
+        firstName: state.firstName,
+        amount: state.price,
+        serviceName: state.serviceName,
+        gameId: gameId
+    });
+    
+    // إرسال إشعار للإدارة
+    await sendOrderNotification(order);
+    
+    userStates.delete(chatId);
+    
+    chargingBot.sendMessage(chatId,
+        `✅ *تم تقديم طلبك بنجاح!*\n\n` +
+        `🎮 الخدمة: ${state.serviceName}\n` +
+        `💰 المبلغ: ${state.price}$\n` +
+        `🆔 رقم الطلب: ${order.orderId}\n` +
+        `🎮 ID اللعبة: ${gameId}\n` +
+        `💰 الرصيد المتبقي: ${user.balance}$\n\n` +
+        `⏳ *جاري تنفيذ طلبك...*\n` +
+        `سيتم إعلامك عند اكتماله.`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                keyboard: [['🏠 الرئيسية', '📋 طلباتي']],
+                resize_keyboard: true
+            }
+        }
+    );
+}
+
+// ========== نظام شحن الرصيد ==========
+
+function startDepositProcess(chatId) {
+    chargingBot.sendMessage(chatId,
+        `💳 *شحن الرصيد*\n\n` +
+        `الرجاء إدخال المبلغ (بالدولار):\n` +
+        `مثال: 5 أو 10.5\n\n` +
+        `📌 الحد الأدنى: 1$\n` +
+        `📌 الحد الأقصى: 1000$`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                keyboard: [['🚫 إلغاء العملية']],
+                resize_keyboard: true
+            }
+        }
+    );
+    
+    userStates.set(chatId, {
+        type: 'awaiting_deposit_amount',
+        step: 1
+    });
+}
+
+async function handleDepositAmount(chatId, text, user) {
+    const amount = parseFloat(text);
+    
+    if (isNaN(amount) || amount < 1 || amount > 1000) {
+        chargingBot.sendMessage(chatId,
+            '❌ *مبلغ غير صالح*\n\n' +
+            'الرجاء إدخال مبلغ بين 1$ و 1000$',
+            { parse_mode: 'Markdown' }
+        );
+        return;
+    }
+    
+    chargingBot.sendMessage(chatId,
+        `💰 *طلب شحن رصيد*\n\n` +
+        `💵 المبلغ: *${amount}$*\n\n` +
+        `📋 *تعليمات الدفع:*\n` +
+        `1. قم بتحويل *${amount}$* إلى:\n` +
+        `   🆔 *${PAYMENT_ID}*\n` +
+        `2. بعد التحويل، أرسل *صورة إيصال الدفع*\n\n` +
+        `⚠️ *تأكد من:*\n` +
+        `• صحة المبلغ المحول\n` +
+        `• وضوح صورة الإيصال`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                keyboard: [['🚫 إلغاء العملية']],
+                resize_keyboard: true
+            }
+        }
+    );
+    
+    userStates.set(chatId, {
+        type: 'awaiting_deposit_receipt',
+        amount: amount,
+        username: user.username,
+        firstName: user.firstName,
+        step: 2
+    });
+}
+
+async function handleDepositReceipt(chatId, msg, state, user) {
+    try {
+        console.log(`📸 استلام صورة إيصال من ${chatId}`);
+        
+        const photoId = msg.photo[msg.photo.length - 1].file_id;
+        
+        // إنشاء طلب الشحن
+        const order = createOrder(chatId, 'deposit', {
+            username: state.username,
+            firstName: state.firstName,
+            amount: state.amount,
+            paymentProof: photoId
+        });
+        
+        // إرسال إشعار للإدارة
+        await sendDepositNotification(order, photoId);
+        
+        userStates.delete(chatId);
+        
+        chargingBot.sendMessage(chatId,
+            `✅ *تم استلام إيصال الدفع*\n\n` +
+            `💰 المبلغ: ${state.amount}$\n` +
+            `🆔 رقم الطلب: ${order.orderId}\n` +
+            `📅 الوقت: ${new Date().toLocaleString('ar-SA')}\n\n` +
+            `⏳ *جاري مراجعة الإيصال...*\n` +
+            `سيتم إعلامك عند التأكيد.`,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    keyboard: [['🏠 الرئيسية', '📋 طلباتي']],
+                    resize_keyboard: true
+                }
+            }
+        );
+        
+    } catch (error) {
+        console.error('❌ خطأ في معالجة الإيصال:', error);
+        chargingBot.sendMessage(chatId,
+            '❌ حدث خطأ في معالجة الصورة، يرجى المحاولة مرة أخرى',
+            { parse_mode: 'Markdown' }
+        );
+    }
+}
+
+// ========== دوال أخرى للمستخدمين ==========
+
+function showUserOrders(chatId) {
+    const userOrders = Array.from(orders.values())
+        .filter(o => o.userId === chatId)
+        .sort((a, b) => b.createdAt - a.createdAt);
+    
+    if (userOrders.length === 0) {
+        chargingBot.sendMessage(chatId,
+            '📭 *لا توجد طلبات سابقة*\n\n' +
+            'يمكنك البدء بطلبك الأول!',
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    keyboard: [['🎮 الخدمات', '🏠 الرئيسية']],
+                    resize_keyboard: true
+                }
+            }
+        );
+        return;
+    }
+    
+    let message = `📋 *طلباتي*\n\n`;
+    
+    userOrders.slice(0, 10).forEach(order => {
+        const icon = order.type === 'deposit' ? '💳' : '🎮';
+        const status = getStatusText(order.status);
+        
+        message += `${icon} ${order.serviceName || 'شحن رصيد'}\n`;
+        message += `💰 ${order.amount}$ | ${status}\n`;
+        message += `🆔 ${order.orderId}\n`;
+        message += `📅 ${order.createdAt.toLocaleDateString('ar-SA')}\n\n`;
+    });
+    
+    if (userOrders.length > 10) {
+        message += `📖 و ${userOrders.length - 10} طلباً آخر...\n\n`;
+    }
+    
+    chargingBot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            keyboard: [['🏠 الرئيسية']],
+            resize_keyboard: true
+        }
+    });
+}
+
+function showBalance(chatId, user) {
+    chargingBot.sendMessage(chatId,
+        `💰 *معلومات الرصيد*\n\n` +
+        `💵 الرصيد: *${user.balance}$*\n` +
+        `🎯 الخصم: *${user.discount}%*\n` +
+        `📊 إجمالي المشتريات: *${user.totalSpent}$*\n` +
+        `📦 عدد الطلبات: *${user.ordersCount}*\n\n` +
+        `💡 لشحن الرصيد، اضغط على "💳 شحن رصيد"`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                keyboard: [['💳 شحن رصيد', '🏠 الرئيسية']],
+                resize_keyboard: true
+            }
+        }
+    );
+}
+
+function showHelp(chatId) {
+    const helpText = `🆘 *دليل الاستخدام*\n\n` +
+                    `💳 *شحن الرصيد:*\n` +
+                    `1. اضغط "💳 شحن رصيد"\n` +
+                    `2. أدخل المبلغ\n` +
+                    `3. أرسل صورة الإيصال\n` +
+                    `4. انتظر التأكيد\n\n` +
+                    `🎮 *شراء الخدمات:*\n` +
+                    `1. اضغط "🎮 الخدمات"\n` +
+                    `2. اختر الخدمة\n` +
+                    `3. أدخل ID اللعبة\n` +
+                    `4. انتظر التنفيذ\n\n` +
+                    `🚫 *إلغاء العملية:*\n` +
+                    `يمكنك إلغاء أي عملية بالنقر على زر "🚫 إلغاء العملية"`;
+    
+    chargingBot.sendMessage(chatId, helpText, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            keyboard: [['🏠 الرئيسية']],
+            resize_keyboard: true
+        }
+    });
+}
+
+function getStatusText(status) {
+    const statusMap = {
+        'pending': '⏳ قيد الانتظار',
+        'pending_payment': '💳 بانتظار الدفع',
+        'processing': '🔄 جاري التنفيذ',
+        'completed': '✅ مكتمل',
+        'cancelled': '❌ ملغى'
+    };
+    return statusMap[status] || status;
+}
+
+// ========== إرسال الإشعارات للإدارة ==========
+
+async function sendOrderNotification(order) {
+    const admins = [ADMIN_ID, SECOND_ADMIN_ID];
+    let sentCount = 0;
+    
+    const message = `📦 *طلب خدمة جديد*\n\n` +
+                   `👤 ${order.firstName || '@' + order.username}\n` +
+                   `🆔 \`${order.userId}\`\n` +
+                   `🎮 ${order.serviceName}\n` +
+                   `💰 ${order.amount}$\n` +
+                   `🎮 ID: \`${order.gameId}\`\n` +
+                   `🆔 ${order.orderId}\n` +
+                   `📅 ${order.createdAt.toLocaleString('ar-SA')}`;
+    
+    const keyboard = {
+        inline_keyboard: [
+            [
+                { text: '✅ إكمال', callback_data: `complete_${order.orderId}` },
+                { text: '❌ إلغاء', callback_data: `cancel_${order.orderId}` }
+            ],
+            [
+                { text: '💬 مراسلة', url: `tg://user?id=${order.userId}` }
+            ]
+        ]
+    };
+    
+    for (const adminId of admins) {
+        try {
+            await adminBot.sendMessage(adminId, message, {
+                parse_mode: 'Markdown',
+                reply_markup: keyboard
+            });
+            sentCount++;
+        } catch (error) {
+            console.error(`❌ فشل إرسال إشعار للإدمن ${adminId}:`, error.message);
+        }
+    }
+    
+    return sentCount > 0;
+}
+
+async function sendDepositNotification(order, photoId) {
+    const admins = [ADMIN_ID, SECOND_ADMIN_ID];
+    let sentCount = 0;
+    
+    const message = `💳 *طلب شحن جديد*\n\n` +
+                   `👤 ${order.firstName || '@' + order.username}\n` +
+                   `🆔 \`${order.userId}\`\n` +
+                   `💰 ${order.amount}$\n` +
+                   `🆔 ${order.orderId}\n` +
+                   `📅 ${order.createdAt.toLocaleString('ar-SA')}`;
+    
+    const keyboard = {
+        inline_keyboard: [
+            [
+                { text: '✅ تأكيد', callback_data: `confirm_deposit_${order.orderId}` },
+                { text: '❌ رفض', callback_data: `reject_deposit_${order.orderId}` }
+            ],
+            [
+                { text: '💬 مراسلة', url: `tg://user?id=${order.userId}` }
+            ]
+        ]
+    };
+    
+    for (const adminId of admins) {
+        try {
+            await adminBot.sendPhoto(adminId, photoId, {
+                caption: message,
+                parse_mode: 'Markdown',
+                reply_markup: keyboard
+            });
+            sentCount++;
+        } catch (error) {
+            console.error(`❌ فشل إرسال إشعار للإدمن ${adminId}:`, error.message);
+            
+            // إرسال رسالة بدون صورة كبديل
+            try {
+                await adminBot.sendMessage(adminId, `📸 ${message}\n\n⚠️ لا يمكن عرض الصورة`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: keyboard
+                });
+                sentCount++;
+            } catch (e) {}
+        }
+    }
+    
+    return sentCount > 0;
+}
+
+// ========== بوت الإدارة ==========
+
+adminBot.onText(/\/start/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    if (!isAdmin(chatId)) {
+        adminBot.sendMessage(chatId, '❌ ليس لديك صلاحية للوصول');
+        return;
+    }
+    
+    console.log(`👑 أدمن دخل: ${chatId}`);
+    showAdminMainMenu(chatId);
+});
 
 adminBot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
     
-    // التحقق من صلاحية الأدمن
-    if (![ADMIN_ID, SECOND_ADMIN_ID].includes(chatId)) {
-        adminBot.sendMessage(chatId, '❌ ليس لديك صلاحية للوصول');
-        return;
-    }
+    if (!isAdmin(chatId)) return;
     
-    console.log(`👑 رسالة أدمن: ${text} من ${chatId}`);
+    console.log(`📩 أدمن: ${text}`);
     
     const adminState = adminStates.get(chatId);
     
@@ -152,10 +908,11 @@ adminBot.on('message', async (msg) => {
         return;
     }
     
+    if (!text) return;
+    
     // معالجة الأوامر الرئيسية
     switch(text) {
         case '/start':
-        case '/admin':
         case '🏠 الرئيسية':
             showAdminMainMenu(chatId);
             break;
@@ -170,10 +927,6 @@ adminBot.on('message', async (msg) => {
             
         case '🆕 إضافة خدمة':
             startAddServiceProcess(chatId);
-            break;
-            
-        case '📋 قائمة الخدمات':
-            showAllServicesList(chatId);
             break;
             
         case '📋 الطلبات':
@@ -192,15 +945,20 @@ adminBot.on('message', async (msg) => {
             showAdminMainMenu(chatId);
             break;
             
+        case '🚫 إلغاء':
+            adminStates.delete(chatId);
+            showAdminMainMenu(chatId);
+            break;
+            
         default:
             // التحقق من أزرار إدارة الخدمات
-            if (text && text.startsWith('✏️ تعديل ')) {
+            if (text.startsWith('✏️ تعديل ')) {
                 const serviceId = text.replace('✏️ تعديل ', '');
                 startEditServiceMenu(chatId, serviceId);
-            } else if (text && text.startsWith('🗑️ حذف ')) {
+            } else if (text.startsWith('🗑️ حذف ')) {
                 const serviceId = text.replace('🗑️ حذف ', '');
                 startDeleteServiceProcess(chatId, serviceId);
-            } else if (text && text.startsWith('🔁 ')) {
+            } else if (text.startsWith('🔁 ')) {
                 const serviceId = text.replace('🔁 ', '');
                 toggleServiceStatusAndNotify(chatId, serviceId);
             } else {
@@ -209,7 +967,9 @@ adminBot.on('message', async (msg) => {
     }
 });
 
-// ========== دوال لوحة التحكم ==========
+function isAdmin(chatId) {
+    return chatId == ADMIN_ID || chatId == SECOND_ADMIN_ID;
+}
 
 function showAdminMainMenu(chatId) {
     adminStates.delete(chatId);
@@ -226,15 +986,15 @@ function showAdminMainMenu(chatId) {
                 ['📦 إدارة الخدمات', '📋 الطلبات'],
                 ['💳 الشحنات', '👥 المستخدمين'],
                 ['📊 الإحصائيات', '🆕 إضافة خدمة'],
-                ['🔄 تحديث']
+                ['🔄 تحديث', '🚫 إلغاء']
             ],
             resize_keyboard: true
         }
     };
     
     adminBot.sendMessage(chatId,
-        `👑 *لوحة تحكم الأدمن*\n\n` +
-        `📊 *الإحصائيات:*\n` +
+        `👑 *لوحة التحكم*\n\n` +
+        `📊 *إحصائيات سريعة:*\n` +
         `📦 الخدمات: ${services.size} (${activeServices} مفعلة)\n` +
         `📋 الطلبات النشطة: ${pendingOrders}\n` +
         `👥 المستخدمين: ${users.size}\n\n` +
@@ -243,14 +1003,16 @@ function showAdminMainMenu(chatId) {
     );
 }
 
+// ========== إدارة الخدمات في لوحة التحكم ==========
+
 function showServicesManagement(chatId) {
     const allServices = Array.from(services.values())
         .sort((a, b) => b.createdAt - a.createdAt);
     
     if (allServices.length === 0) {
         adminBot.sendMessage(chatId,
-            '📭 *لا توجد خدمات حالياً*\n\n' +
-            'استخدم "🆕 إضافة خدمة" لبدء إضافة خدمات.',
+            '📭 *لا توجد خدمات*\n\n' +
+            'استخدم "🆕 إضافة خدمة" للبدء.',
             {
                 parse_mode: 'Markdown',
                 reply_markup: {
@@ -263,41 +1025,24 @@ function showServicesManagement(chatId) {
     }
     
     let message = `📦 *إدارة الخدمات*\n\n`;
-    message += `📊 إجمالي الخدمات: ${allServices.length}\n`;
-    message += `🟢 مفعلة: ${allServices.filter(s => s.isActive).length}\n`;
-    message += `🔴 معطلة: ${allServices.filter(s => !s.isActive).length}\n\n`;
-    message += `🎯 *اختر خدمة للتحكم:*\n\n`;
+    message += `📊 إجمالي: ${allServices.length}\n\n`;
     
-    // تقسيم الخدمات إلى مجموعات لعرض أفضل
-    const serviceChunks = [];
-    for (let i = 0; i < allServices.length; i += 5) {
-        serviceChunks.push(allServices.slice(i, i + 5));
-    }
-    
-    // عرض أول 10 خدمات فقط لتجنب مشاكل الحجم
-    const displayServices = allServices.slice(0, 10);
-    
-    displayServices.forEach((service, index) => {
+    // عرض الخدمات مع أزرار التحكم
+    allServices.slice(0, 5).forEach(service => {
         const status = service.isActive ? '🟢' : '🔴';
-        const stockStatus = service.stock > 10 ? '🟢' :
-                          service.stock > 0 ? '🟡' : '🔴';
-        
-        message += `${index + 1}. ${status} *${service.name}*\n`;
-        message += `   💰 ${service.price}$ | 📦 ${stockStatus} ${service.stock}\n`;
-        message += `   🆔 \`${service.id}\`\n\n`;
+        message += `${status} *${service.name}*\n`;
+        message += `💰 ${service.price}$ | 📦 ${service.stock}\n`;
+        message += `🆔 ${service.id}\n\n`;
     });
     
-    if (allServices.length > 10) {
-        message += `📖 و ${allServices.length - 10} خدمة أخرى...\n\n`;
+    if (allServices.length > 5) {
+        message += `📖 و ${allServices.length - 5} خدمة أخرى...\n\n`;
     }
     
-    // إنشاء أزرار الخدمات بشكل ديناميكي
+    // أزرار التحكم
     const keyboardRows = [];
     
-    // أزرار التحكم للخدمات (حد أقصى 5 خدمات في الصفحة)
-    const pageServices = allServices.slice(0, 5);
-    
-    pageServices.forEach(service => {
+    allServices.slice(0, 3).forEach(service => {
         keyboardRows.push([
             `✏️ تعديل ${service.id}`,
             `🗑️ حذف ${service.id}`
@@ -307,8 +1052,8 @@ function showServicesManagement(chatId) {
         ]);
     });
     
-    keyboardRows.push(['🆕 إضافة خدمة', '📋 قائمة الخدمات']);
-    keyboardRows.push(['🏠 الرئيسية']);
+    keyboardRows.push(['🆕 إضافة خدمة', '📋 جميع الخدمات']);
+    keyboardRows.push(['🏠 الرئيسية', '🚫 إلغاء']);
     
     const keyboard = {
         reply_markup: {
@@ -323,63 +1068,6 @@ function showServicesManagement(chatId) {
     });
 }
 
-function showAllServicesList(chatId) {
-    const allServices = Array.from(services.values())
-        .sort((a, b) => a.priority - b.priority);
-    
-    if (allServices.length === 0) {
-        adminBot.sendMessage(chatId, '📭 *لا توجد خدمات*', { parse_mode: 'Markdown' });
-        return;
-    }
-    
-    let message = `📋 *جميع الخدمات*\n\n`;
-    
-    // تجميع الخدمات حسب التصنيف
-    const servicesByCategory = {};
-    allServices.forEach(service => {
-        if (!servicesByCategory[service.category]) {
-            servicesByCategory[service.category] = [];
-        }
-        servicesByCategory[service.category].push(service);
-    });
-    
-    Object.keys(servicesByCategory).forEach(category => {
-        message += `📁 *${category}:*\n`;
-        servicesByCategory[category].forEach((service, index) => {
-            const status = service.isActive ? '🟢' : '🔴';
-            const stockStatus = service.stock > 10 ? '🟢' :
-                              service.stock > 0 ? '🟡' : '🔴';
-            
-            message += `${index + 1}. ${status} ${service.name}\n`;
-            message += `   💰: ${service.price}$ | 📦: ${stockStatus} ${service.stock}\n`;
-            message += `   🆔: \`${service.id}\`\n`;
-            message += `   📝: ${service.description.substring(0, 50)}${service.description.length > 50 ? '...' : ''}\n\n`;
-        });
-    });
-    
-    message += `📊 *الملخص:*\n`;
-    message += `• إجمالي الخدمات: ${allServices.length}\n`;
-    message += `• مفعلة: ${allServices.filter(s => s.isActive).length}\n`;
-    message += `• مخزون منخفض: ${allServices.filter(s => s.stock < 10).length}`;
-    
-    const keyboard = {
-        reply_markup: {
-            keyboard: [
-                ['✏️ تعديل خدمات', '🗑️ حذف خدمات'],
-                ['📦 إدارة الخدمات', '🏠 الرئيسية']
-            ],
-            resize_keyboard: true
-        }
-    };
-    
-    adminBot.sendMessage(chatId, message, {
-        parse_mode: 'Markdown',
-        ...keyboard
-    });
-}
-
-// ========== إضافة خدمة جديدة ==========
-
 function startAddServiceProcess(chatId) {
     adminStates.set(chatId, {
         type: 'adding_service',
@@ -389,21 +1077,17 @@ function startAddServiceProcess(chatId) {
     
     adminBot.sendMessage(chatId,
         `🆕 *إضافة خدمة جديدة*\n\n` +
-        `📝 *الخطوة 1/5:*\n` +
-        `أدخل اسم الخدمة:\n` +
+        `📝 *الخطوة 1:* أدخل اسم الخدمة\n` +
         `مثال: "جواهر فري فاير 5000+500"`,
         {
             parse_mode: 'Markdown',
             reply_markup: {
                 keyboard: [['🚫 إلغاء']],
-                resize_keyboard: true,
-                one_time_keyboard: true
+                resize_keyboard: true
             }
         }
     );
 }
-
-// ========== تعديل الخدمة ==========
 
 function startEditServiceMenu(chatId, serviceId) {
     const service = services.get(serviceId);
@@ -413,6 +1097,12 @@ function startEditServiceMenu(chatId, serviceId) {
         return;
     }
     
+    adminStates.set(chatId, {
+        type: 'editing_service',
+        serviceId: serviceId,
+        step: 1
+    });
+    
     const keyboard = {
         reply_markup: {
             keyboard: [
@@ -420,11 +1110,9 @@ function startEditServiceMenu(chatId, serviceId) {
                 [`✏️ تعديل وصف ${serviceId}`],
                 [`✏️ تعديل سعر ${serviceId}`],
                 [`✏️ تعديل مخزون ${serviceId}`],
-                [`✏️ تعديل تصنيف ${serviceId}`],
                 ['🚫 إلغاء']
             ],
-            resize_keyboard: true,
-            one_time_keyboard: true
+            resize_keyboard: true
         }
     };
     
@@ -432,8 +1120,6 @@ function startEditServiceMenu(chatId, serviceId) {
         `✏️ *تعديل الخدمة*\n\n` +
         `🎮 ${service.name}\n` +
         `💰 ${service.price}$ | 📦 ${service.stock}\n` +
-        `📝 ${service.description}\n` +
-        `📁 ${service.category}\n` +
         `🆔 ${service.id}\n\n` +
         `اختر ما تريد تعديله:`,
         {
@@ -442,8 +1128,6 @@ function startEditServiceMenu(chatId, serviceId) {
         }
     );
 }
-
-// ========== حذف الخدمة ==========
 
 function startDeleteServiceProcess(chatId, serviceId) {
     const service = services.get(serviceId);
@@ -464,55 +1148,24 @@ function startDeleteServiceProcess(chatId, serviceId) {
                 ['✅ نعم، احذف الخدمة'],
                 ['🚫 لا، إلغاء الحذف']
             ],
-            resize_keyboard: true,
-            one_time_keyboard: true
+            resize_keyboard: true
         }
     };
     
     adminBot.sendMessage(chatId,
         `⚠️ *تأكيد حذف الخدمة*\n\n` +
         `🎮 ${service.name}\n` +
-        `💰 ${service.price}$ | 📦 ${service.stock}\n` +
-        `📁 ${service.category}\n` +
+        `💰 ${service.price}$\n` +
+        `📦 ${service.stock}\n` +
         `🆔 ${service.id}\n\n` +
-        `❌ *تحذير:*\n` +
-        `• لا يمكن التراجع عن حذف الخدمة\n` +
-        `• سيتم حذفها نهائياً من النظام\n` +
-        `• لن يتمكن المستخدمون من رؤيتها\n\n` +
-        `هل أنت متأكد من الحذف؟`,
+        `❌ *تحذير:* لا يمكن التراجع عن الحذف!\n` +
+        `هل أنت متأكد؟`,
         {
             parse_mode: 'Markdown',
             ...keyboard
         }
     );
 }
-
-// ========== تفعيل/تعطيل الخدمة ==========
-
-function toggleServiceStatusAndNotify(chatId, serviceId) {
-    const service = toggleServiceStatus(serviceId);
-    
-    if (service) {
-        adminBot.sendMessage(chatId,
-            `🔄 *تم تغيير حالة الخدمة*\n\n` +
-            `🎮 ${service.name}\n` +
-            `📊 الحالة: ${service.isActive ? '🟢 مفعل' : '🔴 معطل'}\n` +
-            `🆔 ${service.id}\n\n` +
-            `✅ تم التحديث بنجاح`,
-            {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
-                    resize_keyboard: true
-                }
-            }
-        );
-    } else {
-        adminBot.sendMessage(chatId, '❌ الخدمة غير موجودة');
-    }
-}
-
-// ========== معالجة حالات الأدمن ==========
 
 async function handleAdminState(chatId, text, state) {
     try {
@@ -537,7 +1190,7 @@ async function handleAdminState(chatId, text, state) {
         }
     } catch (error) {
         console.error('❌ خطأ في معالجة حالة الأدمن:', error);
-        adminBot.sendMessage(chatId, '❌ حدث خطأ، يرجى المحاولة مرة أخرى');
+        adminBot.sendMessage(chatId, '❌ حدث خطأ');
         adminStates.delete(chatId);
         showAdminMainMenu(chatId);
     }
@@ -545,145 +1198,70 @@ async function handleAdminState(chatId, text, state) {
 
 async function handleAddServiceStep(chatId, text, state) {
     switch(state.step) {
-        case 1: // اسم الخدمة
-            if (!text || text.trim().length < 3) {
-                adminBot.sendMessage(chatId, '❌ اسم الخدمة يجب أن يكون على الأقل 3 أحرف');
-                return;
-            }
-            
-            state.data.name = text.trim();
+        case 1:
+            state.data.name = text;
             state.step = 2;
-            
             adminBot.sendMessage(chatId,
                 `✅ *تم حفظ الاسم*\n\n` +
-                `📝 *الخطوة 2/5:*\n` +
-                `أدخل وصف الخدمة:\n` +
-                `مثال: "اشتري 5000 جوهرة واحصل على 500 مجاناً"`,
-                {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        keyboard: [['🚫 إلغاء']],
-                        resize_keyboard: true,
-                        one_time_keyboard: true
-                    }
-                }
+                `📝 *الخطوة 2:* أدخل وصف الخدمة`,
+                { parse_mode: 'Markdown' }
             );
             break;
             
-        case 2: // وصف الخدمة
-            if (!text || text.trim().length < 10) {
-                adminBot.sendMessage(chatId, '❌ الوصف يجب أن يكون على الأقل 10 أحرف');
-                return;
-            }
-            
-            state.data.description = text.trim();
+        case 2:
+            state.data.description = text;
             state.step = 3;
-            
             adminBot.sendMessage(chatId,
                 `✅ *تم حفظ الوصف*\n\n` +
-                `📝 *الخطوة 3/5:*\n` +
-                `أدخل سعر الخدمة (بالدولار):\n` +
-                `مثال: "45" أو "10.5"`,
-                {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        keyboard: [['🚫 إلغاء']],
-                        resize_keyboard: true,
-                        one_time_keyboard: true
-                    }
-                }
+                `📝 *الخطوة 3:* أدخل السعر ($)`,
+                { parse_mode: 'Markdown' }
             );
             break;
             
-        case 3: // سعر الخدمة
+        case 3:
             const price = parseFloat(text);
             if (isNaN(price) || price <= 0) {
-                adminBot.sendMessage(chatId, '❌ السعر يجب أن يكون رقماً أكبر من 0');
+                adminBot.sendMessage(chatId, '❌ سعر غير صالح');
                 return;
             }
-            
             state.data.price = price;
             state.step = 4;
-            
             adminBot.sendMessage(chatId,
                 `✅ *تم حفظ السعر*\n\n` +
-                `📝 *الخطوة 4/5:*\n` +
-                `أدخل كمية المخزون:\n` +
-                `مثال: "50"`,
-                {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        keyboard: [['🚫 إلغاء']],
-                        resize_keyboard: true,
-                        one_time_keyboard: true
-                    }
-                }
+                `📝 *الخطوة 4:* أدخل المخزون`,
+                { parse_mode: 'Markdown' }
             );
             break;
             
-        case 4: // المخزون
+        case 4:
             const stock = parseInt(text);
             if (isNaN(stock) || stock < 0) {
-                adminBot.sendMessage(chatId, '❌ المخزون يجب أن يكون رقماً صحيحاً غير سالب');
+                adminBot.sendMessage(chatId, '❌ مخزون غير صالح');
                 return;
             }
-            
             state.data.stock = stock;
-            state.step = 5;
             
-            const keyboard = {
-                reply_markup: {
-                    keyboard: [
-                        ['جواهر', 'باقات'],
-                        ['أسلبة', 'عروض خاصة'],
-                        ['أخرى', '🚫 إلغاء']
-                    ],
-                    resize_keyboard: true,
-                    one_time_keyboard: true
-                }
-            };
-            
-            adminBot.sendMessage(chatId,
-                `✅ *تم حفظ المخزون*\n\n` +
-                `📝 *الخطوة 5/5:*\n` +
-                `اختر تصنيف الخدمة:`,
-                {
-                    parse_mode: 'Markdown',
-                    ...keyboard
-                }
-            );
-            break;
-            
-        case 5: // التصنيف
-            if (!['جواهر', 'باقات', 'أسلبة', 'عروض خاصة', 'أخرى'].includes(text)) {
-                adminBot.sendMessage(chatId, '❌ اختر تصنيفاً صحيحاً من القائمة');
-                return;
-            }
-            
+            // إضافة الخدمة
             const service = addService(
                 state.data.name,
                 state.data.description,
                 state.data.price,
                 state.data.stock,
-                text
+                'جواهر'
             );
             
             adminStates.delete(chatId);
             
             adminBot.sendMessage(chatId,
-                `🎉 *تمت إضافة الخدمة بنجاح!*\n\n` +
-                `🎮 الاسم: ${service.name}\n` +
-                `📝 الوصف: ${service.description}\n` +
-                `💰 السعر: ${service.price}$\n` +
-                `📦 المخزون: ${service.stock}\n` +
-                `📁 التصنيف: ${service.category}\n` +
-                `🆔 المعرف: \`${service.id}\`\n` +
-                `🟢 الحالة: ${service.isActive ? 'مفعلة' : 'معطلة'}\n\n` +
-                `✅ الخدمة متاحة الآن للمستخدمين`,
+                `🎉 *تمت إضافة الخدمة*\n\n` +
+                `🎮 ${service.name}\n` +
+                `💰 ${service.price}$\n` +
+                `📦 ${service.stock}\n` +
+                `🆔 ${service.id}`,
                 {
                     parse_mode: 'Markdown',
                     reply_markup: {
-                        keyboard: [['📦 إدارة الخدمات', '🆕 إضافة خدمة'], ['🏠 الرئيسية']],
+                        keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
                         resize_keyboard: true
                     }
                 }
@@ -695,50 +1273,100 @@ async function handleAddServiceStep(chatId, text, state) {
 }
 
 async function handleEditServiceStep(chatId, text, state) {
-    // هذا سيعالج من خلال أزرار محددة لكل حقل
-    // سيتم معالجته في الرسائل الرئيسية
+    const service = services.get(state.serviceId);
+    if (!service) return;
+    
+    if (text.startsWith('✏️ تعديل اسم ')) {
+        state.editingField = 'name';
+        adminBot.sendMessage(chatId, 'أدخل الاسم الجديد:');
+    } else if (text.startsWith('✏️ تعديل وصف ')) {
+        state.editingField = 'description';
+        adminBot.sendMessage(chatId, 'أدخل الوصف الجديد:');
+    } else if (text.startsWith('✏️ تعديل سعر ')) {
+        state.editingField = 'price';
+        adminBot.sendMessage(chatId, 'أدخل السعر الجديد:');
+    } else if (text.startsWith('✏️ تعديل مخزون ')) {
+        state.editingField = 'stock';
+        adminBot.sendMessage(chatId, 'أدخل المخزون الجديد:');
+    } else {
+        // معالجة القيمة المدخلة
+        let value = text;
+        let isValid = true;
+        
+        if (state.editingField === 'price') {
+            value = parseFloat(text);
+            if (isNaN(value) || value <= 0) {
+                adminBot.sendMessage(chatId, '❌ سعر غير صالح');
+                isValid = false;
+            }
+        } else if (state.editingField === 'stock') {
+            value = parseInt(text);
+            if (isNaN(value) || value < 0) {
+                adminBot.sendMessage(chatId, '❌ مخزون غير صالح');
+                isValid = false;
+            }
+        }
+        
+        if (isValid) {
+            const updates = {};
+            updates[state.editingField] = value;
+            updateService(state.serviceId, updates);
+            
+            adminStates.delete(chatId);
+            
+            adminBot.sendMessage(chatId,
+                `✅ *تم التعديل بنجاح*\n\n` +
+                `🎮 ${service.name}\n` +
+                `🔄 ${state.editingField}: ${value}`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
+                        resize_keyboard: true
+                    }
+                }
+            );
+        }
+    }
+    
+    adminStates.set(chatId, state);
 }
 
 async function handleDeleteService(chatId, text, state) {
     if (text === '✅ نعم، احذف الخدمة') {
         const service = services.get(state.serviceId);
-        
         if (service) {
-            const serviceName = service.name;
-            const serviceId = state.serviceId;
+            deleteService(state.serviceId);
             
-            // حذف الخدمة
-            const deleted = deleteService(state.serviceId);
+            adminStates.delete(chatId);
             
-            if (deleted) {
-                adminStates.delete(chatId);
-                
-                adminBot.sendMessage(chatId,
-                    `🗑️ *تم حذف الخدمة بنجاح*\n\n` +
-                    `🎮 ${serviceName}\n` +
-                    `🆔 \`${serviceId}\`\n\n` +
-                    `✅ تم الحذف بشكل نهائي من النظام`,
-                    {
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
-                            resize_keyboard: true
-                        }
+            adminBot.sendMessage(chatId,
+                `🗑️ *تم حذف الخدمة*\n\n` +
+                `🎮 ${service.name}\n` +
+                `✅ تم الحذف بنجاح`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
+                        resize_keyboard: true
                     }
-                );
-            } else {
-                adminBot.sendMessage(chatId,
-                    '❌ فشل حذف الخدمة، يرجى المحاولة مرة أخرى',
-                    { parse_mode: 'Markdown' }
-                );
-            }
-        } else {
-            adminBot.sendMessage(chatId, '❌ الخدمة غير موجودة');
+                }
+            );
         }
     } else {
         adminStates.delete(chatId);
+        showAdminMainMenu(chatId);
+    }
+}
+
+function toggleServiceStatusAndNotify(chatId, serviceId) {
+    const service = toggleServiceStatus(serviceId);
+    
+    if (service) {
         adminBot.sendMessage(chatId,
-            '✅ تم إلغاء عملية الحذف',
+            `🔄 *تم تغيير الحالة*\n\n` +
+            `🎮 ${service.name}\n` +
+            `📊 ${service.isActive ? '🟢 مفعل' : '🔴 معطل'}`,
             {
                 parse_mode: 'Markdown',
                 reply_markup: {
@@ -750,67 +1378,180 @@ async function handleDeleteService(chatId, text, state) {
     }
 }
 
-// ========== معالجة أزرار التعديل التفصيلية ==========
+// ========== معالجة Callback Queries ==========
 
 adminBot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
+    const messageId = callbackQuery.message.message_id;
     
-    if (![ADMIN_ID, SECOND_ADMIN_ID].includes(chatId)) {
+    if (!isAdmin(chatId)) {
         adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ غير مصرح' });
         return;
     }
     
-    console.log(`🔘 callback أدمن: ${data}`);
-    
-    // يمكن إضافة معالجة callbacks هنا إذا لزم الأمر
+    try {
+        if (data.startsWith('complete_')) {
+            const orderId = data.replace('complete_', '');
+            const order = updateOrderStatus(orderId, 'completed', chatId);
+            
+            if (order) {
+                // إشعار المستخدم
+                chargingBot.sendMessage(order.userId,
+                    `✅ *تم إكمال طلبك*\n\n` +
+                    `🎮 ${order.serviceName}\n` +
+                    `💰 ${order.amount}$\n` +
+                    `🆔 ${order.orderId}\n\n` +
+                    `🎉 تم التنفيذ بنجاح!`,
+                    { parse_mode: 'Markdown' }
+                );
+                
+                // تحديث رسالة الأدمن
+                adminBot.editMessageText(
+                    `✅ *تم إكمال الطلب*\n\n` +
+                    `👤 ${order.firstName || '@' + order.username}\n` +
+                    `🎮 ${order.serviceName}\n` +
+                    `💰 ${order.amount}$\n` +
+                    `🆔 ${order.orderId}`,
+                    {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown'
+                    }
+                );
+                
+                adminBot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم الإكمال' });
+            }
+            
+        } else if (data.startsWith('cancel_')) {
+            const orderId = data.replace('cancel_', '');
+            const order = updateOrderStatus(orderId, 'cancelled', chatId);
+            
+            if (order) {
+                // إرجاع المبلغ للمستخدم
+                const user = getUser(order.userId);
+                user.balance += order.amount;
+                updateUser(order.userId, user);
+                
+                // إشعار المستخدم
+                chargingBot.sendMessage(order.userId,
+                    `❌ *تم إلغاء طلبك*\n\n` +
+                    `🎮 ${order.serviceName}\n` +
+                    `💰 ${order.amount}$\n` +
+                    `🆔 ${order.orderId}\n\n` +
+                    `💳 تم إرجاع ${order.amount}$ إلى رصيدك`,
+                    { parse_mode: 'Markdown' }
+                );
+                
+                // تحديث رسالة الأدمن
+                adminBot.editMessageText(
+                    `❌ *تم إلغاء الطلب*\n\n` +
+                    `👤 ${order.firstName || '@' + order.username}\n` +
+                    `🎮 ${order.serviceName}\n` +
+                    `💰 ${order.amount}$\n` +
+                    `💳 تم إرجاع المبلغ`,
+                    {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown'
+                    }
+                );
+                
+                adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ تم الإلغاء' });
+            }
+            
+        } else if (data.startsWith('confirm_deposit_')) {
+            const orderId = data.replace('confirm_deposit_', '');
+            const order = updateOrderStatus(orderId, 'completed', chatId);
+            
+            if (order) {
+                // إضافة الرصيد للمستخدم
+                const user = getUser(order.userId);
+                user.balance += order.amount;
+                user.totalSpent += order.amount;
+                updateUser(order.userId, user);
+                
+                // إشعار المستخدم
+                chargingBot.sendMessage(order.userId,
+                    `✅ *تم تأكيد شحن رصيدك*\n\n` +
+                    `💰 ${order.amount}$\n` +
+                    `💳 الرصيد الجديد: ${user.balance}$\n` +
+                    `🆔 ${order.orderId}\n\n` +
+                    `🎉 يمكنك الآن شراء الخدمات`,
+                    { parse_mode: 'Markdown' }
+                );
+                
+                // تحديث رسالة الأدمن
+                adminBot.editMessageText(
+                    `✅ *تم تأكيد الشحن*\n\n` +
+                    `👤 ${order.firstName || '@' + order.username}\n` +
+                    `💰 ${order.amount}$\n` +
+                    `💳 تم إضافة الرصيد\n` +
+                    `🆔 ${order.orderId}`,
+                    {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown'
+                    }
+                );
+                
+                adminBot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم التأكيد' });
+            }
+            
+        } else if (data.startsWith('reject_deposit_')) {
+            const orderId = data.replace('reject_deposit_', '');
+            const order = updateOrderStatus(orderId, 'cancelled', chatId);
+            
+            if (order) {
+                // إشعار المستخدم
+                chargingBot.sendMessage(order.userId,
+                    `❌ *فشل تأكيد الدفع*\n\n` +
+                    `💰 ${order.amount}$\n` +
+                    `🆔 ${order.orderId}\n\n` +
+                    `⚠️ يرجى التحقق والمحاولة مرة أخرى`,
+                    { parse_mode: 'Markdown' }
+                );
+                
+                // تحديث رسالة الأدمن
+                adminBot.editMessageText(
+                    `❌ *تم رفض الشحن*\n\n` +
+                    `👤 ${order.firstName || '@' + order.username}\n` +
+                    `💰 ${order.amount}$\n` +
+                    `❌ تم إبلاغ المستخدم\n` +
+                    `🆔 ${order.orderId}`,
+                    {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown'
+                    }
+                );
+                
+                adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ تم الرفض' });
+            }
+        }
+    } catch (error) {
+        console.error('❌ خطأ في Callback:', error);
+        adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ حدث خطأ' });
+    }
 });
 
-// ========== معالجة أزرار التعديل المباشرة ==========
-
-// سيكون هناك معالج إضافي للرسائل المباشرة للتعديل
-// نحتاج إلى إعادة توجيه الأزرار المناسبة
-
-// ========== دوال إضافية للوحة التحكم ==========
+// ========== دوال أخرى للوحة التحكم ==========
 
 function showAdminStats(chatId) {
     const totalUsers = users.size;
-    const activeUsers = Array.from(users.values())
-        .filter(u => {
-            const lastActive = new Date(u.lastActive);
-            const now = new Date();
-            const diffDays = (now - lastActive) / (1000 * 60 * 60 * 24);
-            return diffDays <= 7;
-        }).length;
-    
     const totalOrders = orders.size;
     const completedOrders = Array.from(orders.values())
         .filter(o => o.status === 'completed').length;
-    
     const totalRevenue = Array.from(orders.values())
         .filter(o => o.status === 'completed')
-        .reduce((sum, order) => sum + order.amount, 0);
-    
-    const activeServices = Array.from(services.values())
-        .filter(s => s.isActive).length;
+        .reduce((sum, o) => sum + o.amount, 0);
     
     adminBot.sendMessage(chatId,
-        `📊 *إحصائيات مفصلة*\n\n` +
-        `👥 *المستخدمين:*\n` +
-        `• الإجمالي: ${totalUsers}\n` +
-        `• النشطين (7 أيام): ${activeUsers}\n` +
-        `• النسبة: ${((activeUsers / totalUsers) * 100 || 0).toFixed(1)}%\n\n` +
-        `📦 *الطلبات:*\n` +
-        `• الإجمالي: ${totalOrders}\n` +
-        `• المكتملة: ${completedOrders}\n` +
-        `• النسبة: ${((completedOrders / totalOrders) * 100 || 0).toFixed(1)}%\n\n` +
-        `💰 *الإيرادات:*\n` +
-        `• الإجمالي: ${totalRevenue.toFixed(2)}$\n` +
-        `• متوسط الطلب: ${(totalRevenue / completedOrders || 0).toFixed(2)}$\n\n` +
-        `🎮 *الخدمات:*\n` +
-        `• الإجمالي: ${services.size}\n` +
-        `• المفعلة: ${activeServices}\n` +
-        `• المعطلة: ${services.size - activeServices}`,
+        `📊 *إحصائيات*\n\n` +
+        `👥 المستخدمين: ${totalUsers}\n` +
+        `📦 الطلبات: ${totalOrders}\n` +
+        `✅ المكتملة: ${completedOrders}\n` +
+        `💰 الإيرادات: ${totalRevenue.toFixed(2)}$`,
         {
             parse_mode: 'Markdown',
             reply_markup: {
@@ -823,25 +1564,22 @@ function showAdminStats(chatId) {
 
 function showAllOrders(chatId) {
     const allOrders = Array.from(orders.values())
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .slice(0, 20);
+        .sort((a, b) => b.createdAt - a.createdAt);
     
     if (allOrders.length === 0) {
         adminBot.sendMessage(chatId, '📭 *لا توجد طلبات*', { parse_mode: 'Markdown' });
         return;
     }
     
-    let message = `📋 *آخر 20 طلب*\n\n`;
+    let message = '📋 *جميع الطلبات*\n\n';
     
-    allOrders.forEach((order, index) => {
+    allOrders.slice(0, 10).forEach(order => {
         const icon = order.type === 'deposit' ? '💳' : '🎮';
-        const status = order.status === 'pending' ? '⏳' :
-                      order.status === 'completed' ? '✅' :
-                      order.status === 'cancelled' ? '❌' : '💳';
+        const status = getStatusText(order.status);
         
-        message += `${index + 1}. ${icon} ${status} ${order.serviceName || 'شحن رصيد'}\n`;
-        message += `   👤 @${order.username} | 💰 ${order.amount}$\n`;
-        message += `   🆔 ${order.orderId} | 📅 ${order.createdAt.toLocaleDateString('ar-SA')}\n\n`;
+        message += `${icon} ${order.serviceName || 'شحن رصيد'}\n`;
+        message += `👤 @${order.username} | 💰 ${order.amount}$\n`;
+        message += `🆔 ${order.orderId} | ${status}\n\n`;
     });
     
     adminBot.sendMessage(chatId, message, {
@@ -855,8 +1593,7 @@ function showAllOrders(chatId) {
 
 function showDepositOrders(chatId) {
     const depositOrders = Array.from(orders.values())
-        .filter(o => o.type === 'deposit' && o.status === 'pending_payment')
-        .sort((a, b) => b.createdAt - a.createdAt);
+        .filter(o => o.type === 'deposit' && o.status === 'pending_payment');
     
     if (depositOrders.length === 0) {
         adminBot.sendMessage(chatId, '💳 *لا توجد طلبات شحن*', { parse_mode: 'Markdown' });
@@ -865,8 +1602,7 @@ function showDepositOrders(chatId) {
     
     adminBot.sendMessage(chatId,
         `💳 *طلبات الشحن*\n\n` +
-        `📊 بانتظار التأكيد: ${depositOrders.length}\n\n` +
-        `استخدم الإشعارات المباشرة للتحكم`,
+        `📊 بانتظار التأكيد: ${depositOrders.length}`,
         {
             parse_mode: 'Markdown',
             reply_markup: {
@@ -879,26 +1615,19 @@ function showDepositOrders(chatId) {
 
 function showUsersList(chatId) {
     const allUsers = Array.from(users.values())
-        .sort((a, b) => b.lastActive - a.lastActive)
-        .slice(0, 15);
+        .sort((a, b) => b.lastActive - a.lastActive);
     
     if (allUsers.length === 0) {
         adminBot.sendMessage(chatId, '👥 *لا يوجد مستخدمين*', { parse_mode: 'Markdown' });
         return;
     }
     
-    let message = `👥 *آخر 15 مستخدم نشط*\n\n`;
+    let message = '👥 *المستخدمين*\n\n';
     
-    allUsers.forEach((user, index) => {
-        const daysSinceActive = Math.floor((Date.now() - new Date(user.lastActive).getTime()) / (1000 * 60 * 60 * 24));
-        const activity = daysSinceActive === 0 ? '🟢 اليوم' :
-                        daysSinceActive <= 1 ? '🟢 أمس' :
-                        daysSinceActive <= 7 ? '🟡 هذا الأسبوع' : '🔴 قديم';
-        
-        message += `${index + 1}. 👤 ${user.firstName || '@' + user.username}\n`;
-        message += `   🆔 ${user.userId}\n`;
-        message += `   💰 ${user.balance}$ | 📦 ${user.ordersCount} طلب\n`;
-        message += `   📅 النشاط: ${activity}\n\n`;
+    allUsers.slice(0, 10).forEach(user => {
+        message += `👤 ${user.firstName || '@' + user.username}\n`;
+        message += `💰 ${user.balance}$ | 📦 ${user.ordersCount}\n`;
+        message += `🆔 ${user.userId}\n\n`;
     });
     
     adminBot.sendMessage(chatId, message, {
@@ -910,133 +1639,55 @@ function showUsersList(chatId) {
     });
 }
 
-// ========== معالجة أزرار التعديل الخاصة ==========
-
-// معالج إضافي للرسائل التي تبدأ بأنماط محددة
-adminBot.on('message', async (msg) => {
-    const chatId = msg.chat.id;
-    const text = msg.text;
-    
-    if (![ADMIN_ID, SECOND_ADMIN_ID].includes(chatId)) return;
-    
-    // معالجة أزرار تعديل الخدمات التفصيلية
-    if (text && text.startsWith('✏️ تعديل اسم ')) {
-        const serviceId = text.replace('✏️ تعديل اسم ', '');
-        startEditServiceField(chatId, serviceId, 'name');
-    } else if (text && text.startsWith('✏️ تعديل وصف ')) {
-        const serviceId = text.replace('✏️ تعديل وصف ', '');
-        startEditServiceField(chatId, serviceId, 'description');
-    } else if (text && text.startsWith('✏️ تعديل سعر ')) {
-        const serviceId = text.replace('✏️ تعديل سعر ', '');
-        startEditServiceField(chatId, serviceId, 'price');
-    } else if (text && text.startsWith('✏️ تعديل مخزون ')) {
-        const serviceId = text.replace('✏️ تعديل مخزون ', '');
-        startEditServiceField(chatId, serviceId, 'stock');
-    } else if (text && text.startsWith('✏️ تعديل تصنيف ')) {
-        const serviceId = text.replace('✏️ تعديل تصنيف ', '');
-        startEditServiceField(chatId, serviceId, 'category');
-    }
-});
-
-function startEditServiceField(chatId, serviceId, field) {
-    const service = services.get(serviceId);
-    
-    if (!service) {
-        adminBot.sendMessage(chatId, '❌ الخدمة غير موجودة');
-        return;
-    }
-    
-    let fieldName = '';
-    let example = '';
-    
-    switch(field) {
-        case 'name':
-            fieldName = 'الاسم';
-            example = 'جواهر فري فاير 5000+500';
-            break;
-        case 'description':
-            fieldName = 'الوصف';
-            example = 'اشتري 5000 جوهرة واحصل على 500 مجاناً';
-            break;
-        case 'price':
-            fieldName = 'السعر';
-            example = '45 أو 10.5';
-            break;
-        case 'stock':
-            fieldName = 'المخزون';
-            example = '50';
-            break;
-        case 'category':
-            fieldName = 'التصنيف';
-            example = 'جواهر';
-            break;
-    }
-    
-    adminStates.set(chatId, {
-        type: 'editing_service_field',
-        serviceId: serviceId,
-        field: field,
-        fieldName: fieldName
-    });
-    
-    adminBot.sendMessage(chatId,
-        `✏️ *تعديل ${fieldName}*\n\n` +
-        `🎮 الخدمة: ${service.name}\n` +
-        `القيمة الحالية: ${service[field]}\n\n` +
-        `أدخل القيمة الجديدة:\n` +
-        `مثال: ${example}`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                keyboard: [['🚫 إلغاء']],
-                resize_keyboard: true,
-                one_time_keyboard: true
-            }
-        }
-    );
-}
-
 // ========== تشغيل النظام ==========
 
-console.log('🚀 بدء تشغيل نظام إدارة الخدمات...');
+console.log('🚀 بدء تشغيل نظام البوتات...');
 
-// تهيئة الخدمات
-initializeServices();
+// تحميل البيانات
+loadData();
 
-console.log('✅ تم تحميل النظام بنجاح!');
-console.log(`🤖 بوت الإدارة: جاهز (@otzhabot)`);
-console.log(`📊 عدد الخدمات: ${services.size}`);
+console.log('✅ النظام جاهز للعمل!');
+console.log(`🤖 بوت المستخدمين: @Diamouffbot`);
+console.log(`👑 بوت الإدارة: @otzhabot`);
+console.log(`📊 المستخدمين: ${users.size} | الخدمات: ${services.size} | الطلبات: ${orders.size}`);
 
-// إرسال رسالة بدء التشغيل للمدراء
-setTimeout(() => {
-    try {
-        adminBot.sendMessage(ADMIN_ID, 
-            '✅ *نظام إدارة الخدمات يعمل*\n\n' +
-            `👑 البوت: @otzhabot\n` +
-            `📦 الخدمات: ${services.size}\n` +
-            `🛠️ الميزات:\n` +
-            `• إضافة خدمات جديدة\n` +
-            `• تعديل الخدمات\n` +
-            `• حذف الخدمات\n` +
-            `• تفعيل/تعطيل الخدمات\n\n` +
-            `🎯 جاهز للاستخدام!`,
-            { parse_mode: 'Markdown' }
-        );
-    } catch (e) {
-        console.log('⚠️ لا يمكن إرسال رسالة بدء التشغيل للمسؤول');
-    }
-}, 2000);
+// حفظ البيانات كل 5 دقائق
+setInterval(saveData, 5 * 60 * 1000);
 
 // تشغيل سيرفر ويب
 const PORT = process.env.PORT || 3000;
 const http = require('http');
 const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(`خدمات Free Fire - ${services.size} خدمة متاحة`);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`
+        <!DOCTYPE html>
+        <html dir="rtl">
+        <head>
+            <meta charset="UTF-8">
+            <title>نظام بوتات Free Fire</title>
+            <style>
+                body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
+                h1 { color: #333; }
+                .stats { background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px; display: inline-block; }
+                .stat { margin: 10px; font-size: 18px; }
+            </style>
+        </head>
+        <body>
+            <h1>🎮 نظام بوتات Free Fire</h1>
+            <div class="stats">
+                <div class="stat">👥 المستخدمين: ${users.size}</div>
+                <div class="stat">📦 الخدمات: ${services.size}</div>
+                <div class="stat">📋 الطلبات: ${orders.size}</div>
+                <div class="stat">✅ النظام يعمل بنجاح</div>
+            </div>
+            <p>⏰ ${new Date().toLocaleString('ar-SA')}</p>
+        </body>
+        </html>
+    `);
 });
 
 server.listen(PORT, () => {
     console.log(`🌐 السيرفر يعمل على المنفذ: ${PORT}`);
 });
 
-console.log('🎉 نظام إدارة الخدمات جاهز بالكامل!');
+console.log('🎉 تم تشغيل النظام بنجاح!');
