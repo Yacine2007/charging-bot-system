@@ -1,6 +1,4 @@
 const TelegramBot = require('node-telegram-bot-api');
-const fs = require('fs');
-const path = require('path');
 
 // === إعداد التوكنات ===
 const CHARGING_BOT_TOKEN = '8223596744:AAGHOMQ3Sjk3-X_Z7eXXnL5drAXaHXglLFg';
@@ -16,7 +14,10 @@ const chargingBot = new TelegramBot(CHARGING_BOT_TOKEN, {
     polling: {
         interval: 300,
         autoStart: true,
-        params: { timeout: 10 }
+        params: { timeout: 30 }
+    },
+    request: {
+        timeout: 60000
     }
 });
 
@@ -24,35 +25,35 @@ const adminBot = new TelegramBot(ADMIN_BOT_TOKEN, {
     polling: {
         interval: 300,
         autoStart: true,
-        params: { timeout: 10 }
+        params: { timeout: 30 }
+    },
+    request: {
+        timeout: 60000
     }
 });
 
 // ========== تخزين البيانات ==========
-const dataDir = path.join(__dirname, 'data');
+let users = {};
+let services = {};
+let orders = {};
+const userSessions = {};
+const adminSessions = {};
+
+// ========== نظام حفظ البيانات المحسن ==========
+const fs = require('fs');
+const path = require('path');
+const DATA_DIR = './bot_data';
 
 // إنشاء مجلد البيانات إذا لم يكن موجوداً
-if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir);
+if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-let users = new Map();
-let services = new Map();
-let orders = new Map();
-const userStates = new Map();
-const adminStates = new Map();
-
-// ========== دوال حفظ البيانات ==========
 function saveData() {
     try {
-        const usersData = Array.from(users.entries());
-        const servicesData = Array.from(services.entries());
-        const ordersData = Array.from(orders.entries());
-        
-        fs.writeFileSync(path.join(dataDir, 'users.json'), JSON.stringify(usersData, null, 2));
-        fs.writeFileSync(path.join(dataDir, 'services.json'), JSON.stringify(servicesData, null, 2));
-        fs.writeFileSync(path.join(dataDir, 'orders.json'), JSON.stringify(ordersData, null, 2));
-        
+        fs.writeFileSync(path.join(DATA_DIR, 'users.json'), JSON.stringify(users, null, 2));
+        fs.writeFileSync(path.join(DATA_DIR, 'services.json'), JSON.stringify(services, null, 2));
+        fs.writeFileSync(path.join(DATA_DIR, 'orders.json'), JSON.stringify(orders, null, 2));
         console.log('✅ تم حفظ البيانات');
     } catch (error) {
         console.error('❌ خطأ في حفظ البيانات:', error);
@@ -62,58 +63,80 @@ function saveData() {
 function loadData() {
     try {
         // تحميل المستخدمين
-        if (fs.existsSync(path.join(dataDir, 'users.json'))) {
-            const usersData = JSON.parse(fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8'));
-            users = new Map(usersData);
-            console.log(`✅ تم تحميل ${users.size} مستخدم`);
+        if (fs.existsSync(path.join(DATA_DIR, 'users.json'))) {
+            users = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'users.json'), 'utf8'));
         }
         
         // تحميل الخدمات
-        if (fs.existsSync(path.join(dataDir, 'services.json'))) {
-            const servicesData = JSON.parse(fs.readFileSync(path.join(dataDir, 'services.json'), 'utf8'));
-            services = new Map(servicesData);
-            console.log(`✅ تم تحميل ${services.size} خدمة`);
+        if (fs.existsSync(path.join(DATA_DIR, 'services.json'))) {
+            services = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'services.json'), 'utf8'));
         }
         
         // تحميل الطلبات
-        if (fs.existsSync(path.join(dataDir, 'orders.json'))) {
-            const ordersData = JSON.parse(fs.readFileSync(path.join(dataDir, 'orders.json'), 'utf8'));
-            orders = new Map(ordersData);
-            console.log(`✅ تم تحميل ${orders.size} طلب`);
+        if (fs.existsSync(path.join(DATA_DIR, 'orders.json'))) {
+            orders = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'orders.json'), 'utf8'));
         }
+        
+        console.log(`✅ تم تحميل البيانات: ${Object.keys(users).length} مستخدم، ${Object.keys(services).length} خدمة`);
     } catch (error) {
         console.error('❌ خطأ في تحميل البيانات:', error);
-        initializeDefaultData();
+        initializeDefaultServices();
     }
 }
 
-function initializeDefaultData() {
-    console.log('🔄 تهيئة البيانات الافتراضية...');
-    
-    // خدمات افتراضية
+// حفظ البيانات كل دقيقة
+setInterval(saveData, 60000);
+
+// ========== تهيئة الخدمات الافتراضية ==========
+function initializeDefaultServices() {
     const defaultServices = [
-        { id: 'SERV001', name: 'جواهر فري فاير 100+10', description: 'اشتري 100 جوهرة واحصل على 10 مجاناً', price: 1, stock: 100, category: 'جواهر', isActive: true },
-        { id: 'SERV002', name: 'جواهر فري فاير 500+50', description: 'اشتري 500 جوهرة واحصل على 50 مجاناً', price: 5, stock: 50, category: 'جواهر', isActive: true },
-        { id: 'SERV003', name: 'جواهر فري فاير 1000+100', description: 'اشتري 1000 جوهرة واحصل على 100 مجاناً', price: 10, stock: 30, category: 'جواهر', isActive: true },
-        { id: 'SERV004', name: 'باس موسم فري فاير', description: 'اشتراك باس الموسم الكامل', price: 8, stock: 50, category: 'باقات', isActive: true },
-        { id: 'SERV005', name: 'حزمة أسلبة نادرة', description: 'حزمة أسلبة مميزة مع سكنات', price: 15, stock: 25, category: 'أسلبة', isActive: true }
+        {
+            id: 'service_001',
+            name: 'جواهر فري فاير 100+10',
+            description: 'اشتري 100 جوهرة واحصل على 10 مجاناً',
+            price: 1,
+            stock: 100,
+            category: 'جواهر',
+            isActive: true,
+            createdAt: new Date().toISOString()
+        },
+        {
+            id: 'service_002',
+            name: 'جواهر فري فاير 500+50',
+            description: 'اشتري 500 جوهرة واحصل على 50 مجاناً',
+            price: 5,
+            stock: 50,
+            category: 'جواهر',
+            isActive: true,
+            createdAt: new Date().toISOString()
+        },
+        {
+            id: 'service_003',
+            name: 'جواهر فري فاير 1000+100',
+            description: 'اشتري 1000 جوهرة واحصل على 100 مجاناً',
+            price: 10,
+            stock: 30,
+            category: 'جواهر',
+            isActive: true,
+            createdAt: new Date().toISOString()
+        }
     ];
     
     defaultServices.forEach(service => {
-        services.set(service.id, {
-            ...service,
-            createdAt: new Date(),
-            priority: services.size + 1
-        });
+        services[service.id] = service;
     });
     
-    console.log(`✅ تم تهيئة ${services.size} خدمة افتراضية`);
     saveData();
+    console.log('✅ تم تهيئة الخدمات الافتراضية');
 }
 
-// ========== دوال إدارة الخدمات ==========
+// ========== دوال إدارة الخدمات المحسنة ==========
+function generateServiceId() {
+    return 'service_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
 function addService(name, description, price, stock, category = 'عام') {
-    const serviceId = `SERV${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const serviceId = generateServiceId();
     const service = {
         id: serviceId,
         name: name.trim(),
@@ -122,63 +145,52 @@ function addService(name, description, price, stock, category = 'عام') {
         stock: parseInt(stock),
         category: category.trim(),
         isActive: true,
-        createdAt: new Date(),
-        priority: services.size + 1
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
     };
     
-    services.set(serviceId, service);
+    services[serviceId] = service;
     saveData();
     console.log(`✅ تمت إضافة خدمة: ${name}`);
     return service;
 }
 
 function updateService(serviceId, updates) {
-    const service = services.get(serviceId);
-    if (service) {
-        Object.keys(updates).forEach(key => {
-            if (key in service && key !== 'id') {
-                if (key === 'price') {
-                    service[key] = parseFloat(updates[key]);
-                } else if (key === 'stock') {
-                    service[key] = parseInt(updates[key]);
-                } else {
-                    service[key] = updates[key];
-                }
-            }
-        });
-        service.updatedAt = new Date();
-        services.set(serviceId, service);
-        saveData();
-        return service;
-    }
-    return null;
+    if (!services[serviceId]) return null;
+    
+    const service = services[serviceId];
+    Object.assign(service, updates);
+    service.updatedAt = new Date().toISOString();
+    services[serviceId] = service;
+    saveData();
+    console.log(`✅ تم تحديث خدمة: ${service.name}`);
+    return service;
 }
 
 function deleteService(serviceId) {
-    const deleted = services.delete(serviceId);
-    if (deleted) {
-        saveData();
-        return true;
-    }
-    return false;
+    if (!services[serviceId]) return false;
+    
+    const serviceName = services[serviceId].name;
+    delete services[serviceId];
+    saveData();
+    console.log(`✅ تم حذف خدمة: ${serviceName}`);
+    return true;
 }
 
 function toggleServiceStatus(serviceId) {
-    const service = services.get(serviceId);
-    if (service) {
-        service.isActive = !service.isActive;
-        service.updatedAt = new Date();
-        services.set(serviceId, service);
-        saveData();
-        return service;
-    }
-    return null;
+    if (!services[serviceId]) return null;
+    
+    services[serviceId].isActive = !services[serviceId].isActive;
+    services[serviceId].updatedAt = new Date().toISOString();
+    saveData();
+    console.log(`✅ تم ${services[serviceId].isActive ? 'تفعيل' : 'تعطيل'} خدمة: ${services[serviceId].name}`);
+    return services[serviceId];
 }
 
 // ========== دوال إدارة المستخدمين ==========
 function getUser(userId) {
-    if (!users.has(userId)) {
-        users.set(userId, {
+    if (!users[userId]) {
+        users[userId] = {
             userId: userId,
             username: '',
             firstName: '',
@@ -187,83 +199,93 @@ function getUser(userId) {
             totalSpent: 0,
             ordersCount: 0,
             isActive: true,
-            lastActive: new Date(),
-            createdAt: new Date(),
+            lastActive: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
             language: 'ar'
-        });
+        };
         saveData();
     }
-    return users.get(userId);
+    return users[userId];
 }
 
 function updateUser(userId, updates) {
     const user = getUser(userId);
     Object.assign(user, updates);
-    user.lastActive = new Date();
-    users.set(userId, user);
+    user.lastActive = new Date().toISOString();
+    users[userId] = user;
     saveData();
     return user;
 }
 
 // ========== دوال إدارة الطلبات ==========
-let orderCounter = 1;
+function generateOrderId(type) {
+    const prefix = type === 'deposit' ? 'DEP' : 'ORD';
+    return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+}
 
 function createOrder(userId, type, data) {
-    const orderId = type === 'deposit' ? `DEP${orderCounter++}` : `ORD${orderCounter++}`;
+    const orderId = generateOrderId(type);
+    const user = getUser(userId);
+    
     const order = {
         orderId: orderId,
         userId: userId,
-        username: data.username || '',
-        firstName: data.firstName || '',
+        username: user.username || '',
+        firstName: user.firstName || '',
         type: type,
         amount: data.amount,
         serviceName: data.serviceName || '',
         gameId: data.gameId || '',
         paymentProof: data.paymentProof || '',
         status: type === 'deposit' ? 'pending_payment' : 'pending',
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         notes: ''
     };
     
-    orders.set(orderId, order);
+    orders[orderId] = order;
     
-    // زيادة عدد طلبات المستخدم
-    const user = getUser(userId);
-    user.ordersCount += 1;
-    updateUser(userId, user);
+    // تحديث إحصائيات المستخدم
+    if (type !== 'deposit') {
+        user.ordersCount = (user.ordersCount || 0) + 1;
+        user.totalSpent = (user.totalSpent || 0) + data.amount;
+    }
     
     saveData();
+    console.log(`✅ تم إنشاء طلب: ${orderId} للمستخدم ${userId}`);
     return order;
 }
 
 function updateOrderStatus(orderId, status, adminId = null) {
-    const order = orders.get(orderId);
-    if (order) {
-        order.status = status;
-        order.updatedAt = new Date();
-        if (adminId) {
-            order.processedBy = adminId;
-            order.processedAt = new Date();
-        }
-        orders.set(orderId, order);
-        saveData();
-        return order;
+    if (!orders[orderId]) return null;
+    
+    const order = orders[orderId];
+    order.status = status;
+    order.updatedAt = new Date().toISOString();
+    
+    if (adminId) {
+        order.processedBy = adminId;
+        order.processedAt = new Date().toISOString();
     }
-    return null;
+    
+    orders[orderId] = order;
+    saveData();
+    return order;
 }
 
-// ========== بوت الشحن (واجهة المستخدمين) ==========
+// ========== بوت المستخدمين (@Diamouffbot) ==========
 
-chargingBot.onText(/\/start/, async (msg) => {
+chargingBot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
-    const username = msg.from.username || '';
+    const username = msg.from.username || 'بدون';
     const firstName = msg.from.first_name || '';
     
-    console.log(`🎮 مستخدم جديد: ${chatId} (@${username})`);
+    console.log(`🟢 مستخدم جديد: ${chatId} (@${username})`);
     
     const user = getUser(chatId);
     updateUser(chatId, { username, firstName });
+    
+    userSessions[chatId] = null; // مسح أي جلسة سابقة
     
     showMainMenu(chatId, user);
 });
@@ -271,30 +293,30 @@ chargingBot.onText(/\/start/, async (msg) => {
 chargingBot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
+    
+    if (!text || text.startsWith('/')) return;
+    
+    console.log(`📩 رسالة من ${chatId}: ${text}`);
+    
     const user = getUser(chatId);
+    updateUser(chatId, {}); // تحديث النشاط
     
-    // تحديث نشاط المستخدم
-    updateUser(chatId, {});
-    
-    // الحصول على حالة المستخدم الحالية
-    const userState = userStates.get(chatId);
-    
-    // إذا كان هناك عملية جارية
-    if (userState) {
-        await handleUserState(chatId, text, msg, userState, user);
-        return;
-    }
-    
-    // إذا كان المستخدم يريد إلغاء العملية
-    if (text === '🚫 إلغاء العملية') {
-        userStates.delete(chatId);
+    // زر الإلغاء يعمل في أي وقت
+    if (text === '🚫 إلغاء' || text === '🏠 الرئيسية') {
+        userSessions[chatId] = null;
         showMainMenu(chatId, user);
         return;
     }
     
-    // معالجة الأوامر الرئيسية
-    if (!text) return;
+    // التحقق من الجلسة النشطة
+    const session = userSessions[chatId];
     
+    if (session) {
+        await handleUserSession(chatId, text, msg, session, user);
+        return;
+    }
+    
+    // معالجة الأوامر الرئيسية
     switch(text) {
         case '💳 شحن رصيد':
             startDepositProcess(chatId);
@@ -312,38 +334,28 @@ chargingBot.on('message', async (msg) => {
             showBalance(chatId, user);
             break;
             
-        case '🏠 الرئيسية':
-            showMainMenu(chatId, user);
-            break;
-            
         case '🆘 المساعدة':
             showHelp(chatId);
             break;
             
         default:
-            // التحقق إذا كان اختيار خدمة
+            // إذا كان النص يبدأ باختيار خدمة
             if (text.startsWith('🎮 ')) {
                 const serviceName = text.replace('🎮 ', '').split(' - ')[0];
                 selectService(chatId, user, serviceName);
-            } else {
-                showMainMenu(chatId, user);
             }
     }
 });
 
-// ========== واجهة المستخدم الرئيسية ==========
-
 function showMainMenu(chatId, user) {
-    userStates.delete(chatId);
-    
-    const activeServices = Array.from(services.values()).filter(s => s.isActive).length;
+    const activeServices = Object.values(services).filter(s => s.isActive).length;
     
     const keyboard = {
         reply_markup: {
             keyboard: [
                 ['💳 شحن رصيد', '🎮 الخدمات'],
                 ['📋 طلباتي', '💰 رصيدي'],
-                ['🆘 المساعدة', '🏠 الرئيسية']
+                ['🆘 المساعدة', '🚫 إلغاء']
             ],
             resize_keyboard: true
         }
@@ -353,7 +365,7 @@ function showMainMenu(chatId, user) {
                    `👤 ${user.firstName || 'عزيزي المستخدم'}\n` +
                    `💰 رصيدك: *${user.balance}$*\n` +
                    `🎯 خصمك: *${user.discount}%*\n` +
-                   `📦 ${activeServices} خدمة متاحة\n\n` +
+                   `📊 ${activeServices} خدمة متاحة\n\n` +
                    `📌 *اختر من القائمة:*`;
     
     chargingBot.sendMessage(chatId, message, {
@@ -363,57 +375,36 @@ function showMainMenu(chatId, user) {
 }
 
 function showServicesMenu(chatId, user) {
-    const activeServices = Array.from(services.values())
+    const activeServices = Object.values(services)
         .filter(s => s.isActive && s.stock > 0)
-        .sort((a, b) => a.priority - b.priority);
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     
     if (activeServices.length === 0) {
         chargingBot.sendMessage(chatId,
-            '⚠️ *لا توجد خدمات متاحة حالياً*\n\n' +
-            'يرجى المحاولة لاحقاً أو التواصل مع الدعم.',
-            {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    keyboard: [['🏠 الرئيسية']],
-                    resize_keyboard: true
-                }
-            }
+            '⚠️ *لا توجد خدمات متاحة حالياً*\n' +
+            'يرجى المحاولة لاحقاً.',
+            { parse_mode: 'Markdown' }
         );
         return;
     }
     
     let message = `🎮 *الخدمات المتاحة*\n\n` +
-                 `💰 رصيدك: *${user.balance}$*\n` +
-                 `🎯 خصمك: *${user.discount}%*\n\n` +
-                 `📦 *اختر خدمة:*\n\n`;
+                 `💰 رصيدك الحالي: *${user.balance}$*\n\n`;
     
-    // تجميع الخدمات حسب التصنيف
-    const servicesByCategory = {};
-    activeServices.forEach(service => {
-        if (!servicesByCategory[service.category]) {
-            servicesByCategory[service.category] = [];
-        }
-        servicesByCategory[service.category].push(service);
-    });
-    
-    // عرض الخدمات
-    Object.keys(servicesByCategory).forEach(category => {
-        message += `📁 *${category}:*\n`;
-        servicesByCategory[category].forEach(service => {
-            const finalPrice = service.price * (1 - (user.discount / 100));
-            message += `🎮 ${service.name}\n`;
-            message += `   💰 ${finalPrice.toFixed(2)}$ | 📦 ${service.stock}\n\n`;
-        });
-    });
-    
-    // إنشاء أزرار الخدمات
     const keyboardRows = [];
+    
     activeServices.forEach(service => {
         const finalPrice = service.price * (1 - (user.discount / 100));
-        keyboardRows.push([`🎮 ${service.name} - ${finalPrice.toFixed(2)}$`]);
+        const priceText = finalPrice.toFixed(2);
+        
+        message += `🎮 *${service.name}*\n`;
+        message += `   💰 ${priceText}$ (${service.stock} متبقي)\n`;
+        message += `   📝 ${service.description}\n\n`;
+        
+        keyboardRows.push([`🎮 ${service.name} - ${priceText}$`]);
     });
     
-    keyboardRows.push(['🏠 الرئيسية', '🚫 إلغاء العملية']);
+    keyboardRows.push(['🏠 الرئيسية', '🚫 إلغاء']);
     
     const keyboard = {
         reply_markup: {
@@ -429,16 +420,15 @@ function showServicesMenu(chatId, user) {
 }
 
 function selectService(chatId, user, serviceName) {
-    const service = Array.from(services.values())
+    const service = Object.values(services)
         .find(s => s.name === serviceName && s.isActive && s.stock > 0);
     
     if (!service) {
         chargingBot.sendMessage(chatId,
-            '❌ *الخدمة غير متاحة*\n\n' +
+            '❌ *الخدمة غير متاحة*\n' +
             'يرجى اختيار خدمة أخرى.',
             { parse_mode: 'Markdown' }
         );
-        showServicesMenu(chatId, user);
         return;
     }
     
@@ -449,7 +439,7 @@ function selectService(chatId, user, serviceName) {
             `❌ *رصيدك غير كافي*\n\n` +
             `💰 رصيدك: ${user.balance}$\n` +
             `💵 السعر: ${finalPrice.toFixed(2)}$\n\n` +
-            `💡 يرجى شحن رصيد أولاً.`,
+            `يرجى شحن رصيد أولاً.`,
             { parse_mode: 'Markdown' }
         );
         return;
@@ -457,119 +447,97 @@ function selectService(chatId, user, serviceName) {
     
     chargingBot.sendMessage(chatId,
         `🎮 *${service.name}*\n\n` +
-        `📝 ${service.description}\n` +
-        `💰 السعر: *${finalPrice.toFixed(2)}$*\n` +
-        `📦 المخزون: ${service.stock}\n\n` +
-        `🆔 *الرجاء إرسال ID الخاص بك في Free Fire:*`,
+        `💰 السعر: ${finalPrice.toFixed(2)}$\n` +
+        `📝 ${service.description}\n\n` +
+        `🆔 *أدخل ID الخاص بك في Free Fire:*`,
         {
             parse_mode: 'Markdown',
             reply_markup: {
-                keyboard: [['🚫 إلغاء العملية']],
+                keyboard: [['🚫 إلغاء']],
                 resize_keyboard: true
             }
         }
     );
     
-    userStates.set(chatId, {
+    userSessions[chatId] = {
         type: 'awaiting_game_id',
         serviceId: service.id,
         serviceName: service.name,
         price: finalPrice,
-        username: user.username,
-        firstName: user.firstName
-    });
+        username: user.username
+    };
 }
 
-// ========== معالجة حالات المستخدم ==========
-
-async function handleUserState(chatId, text, msg, state, user) {
+async function handleUserSession(chatId, text, msg, session, user) {
     try {
-        // زر الإلغاء يعمل في أي حالة
-        if (text === '🚫 إلغاء العملية' || text === '🏠 الرئيسية') {
-            userStates.delete(chatId);
-            showMainMenu(chatId, user);
-            return;
-        }
-        
-        switch(state.type) {
-            case 'awaiting_deposit_amount':
-                await handleDepositAmount(chatId, text, user);
-                break;
-                
-            case 'awaiting_deposit_receipt':
-                if (msg.photo) {
-                    await handleDepositReceipt(chatId, msg, state, user);
-                } else {
-                    chargingBot.sendMessage(chatId,
-                        '❌ يرجى إرسال صورة إيصال الدفع\n' +
-                        'أو اضغط "🚫 إلغاء العملية" للإلغاء',
-                        { parse_mode: 'Markdown' }
-                    );
-                }
-                break;
-                
-            case 'awaiting_game_id':
-                await handleGameId(chatId, text, state, user);
-                break;
+        if (session.type === 'awaiting_deposit_amount') {
+            await handleDepositAmount(chatId, text, user);
+        } else if (session.type === 'awaiting_deposit_receipt') {
+            if (msg.photo) {
+                await handleDepositReceipt(chatId, msg, session, user);
+            } else {
+                chargingBot.sendMessage(chatId, '❌ يرجى إرسال صورة الإيصال');
+            }
+        } else if (session.type === 'awaiting_game_id') {
+            await handleGameId(chatId, text, session, user);
         }
     } catch (error) {
-        console.error('❌ خطأ في معالجة حالة المستخدم:', error);
+        console.error('❌ خطأ في معالجة الجلسة:', error);
         chargingBot.sendMessage(chatId, '❌ حدث خطأ، يرجى المحاولة مرة أخرى');
-        userStates.delete(chatId);
+        userSessions[chatId] = null;
         showMainMenu(chatId, user);
     }
 }
 
-async function handleGameId(chatId, text, state, user) {
+async function handleGameId(chatId, text, session, user) {
     const gameId = text.trim();
     
     if (!gameId || gameId.length < 3) {
         chargingBot.sendMessage(chatId,
-            '❌ *ID غير صالح*\n\n' +
-            'الرجاء إدخال ID صحيح (3 أحرف على الأقل)',
+            '❌ *ID غير صالح*\n' +
+            'الرجاء إدخال ID صحيح للعبة',
             { parse_mode: 'Markdown' }
         );
         return;
     }
     
-    // خصم المبلغ من رصيد المستخدم
-    user.balance -= state.price;
-    user.totalSpent += state.price;
+    // خصم المبلغ
+    user.balance -= session.price;
+    user.totalSpent += session.price;
+    user.ordersCount += 1;
     updateUser(chatId, user);
     
-    // تحديث مخزون الخدمة
-    const service = services.get(state.serviceId);
+    // تحديث المخزون
+    const service = services[session.serviceId];
     if (service) {
         service.stock -= 1;
         if (service.stock <= 0) {
             service.isActive = false;
         }
-        services.set(state.serviceId, service);
+        services[session.serviceId] = service;
         saveData();
     }
     
     // إنشاء الطلب
     const order = createOrder(chatId, 'service', {
-        username: state.username,
-        firstName: state.firstName,
-        amount: state.price,
-        serviceName: state.serviceName,
+        username: session.username,
+        amount: session.price,
+        serviceName: session.serviceName,
         gameId: gameId
     });
     
     // إرسال إشعار للإدارة
     await sendOrderNotification(order);
     
-    userStates.delete(chatId);
+    userSessions[chatId] = null;
     
     chargingBot.sendMessage(chatId,
         `✅ *تم تقديم طلبك بنجاح!*\n\n` +
-        `🎮 الخدمة: ${state.serviceName}\n` +
-        `💰 المبلغ: ${state.price}$\n` +
+        `🎮 الخدمة: ${session.serviceName}\n` +
+        `💰 المبلغ: ${session.price}$\n` +
         `🆔 رقم الطلب: ${order.orderId}\n` +
-        `🎮 ID اللعبة: ${gameId}\n` +
-        `💰 الرصيد المتبقي: ${user.balance}$\n\n` +
-        `⏳ *جاري تنفيذ طلبك...*\n` +
+        `🎮 ID اللعبة: ${gameId}\n\n` +
+        `⏳ جاري تنفيذ طلبك...\n` +
         `سيتم إعلامك عند اكتماله.`,
         {
             parse_mode: 'Markdown',
@@ -581,39 +549,31 @@ async function handleGameId(chatId, text, state, user) {
     );
 }
 
-// ========== نظام شحن الرصيد ==========
-
 function startDepositProcess(chatId) {
     chargingBot.sendMessage(chatId,
         `💳 *شحن الرصيد*\n\n` +
-        `الرجاء إدخال المبلغ (بالدولار):\n` +
-        `مثال: 5 أو 10.5\n\n` +
-        `📌 الحد الأدنى: 1$\n` +
-        `📌 الحد الأقصى: 1000$`,
+        `أدخل المبلغ الذي تريد شحنه (بالدولار):\n` +
+        `مثال: 5 أو 10.5`,
         {
             parse_mode: 'Markdown',
             reply_markup: {
-                keyboard: [['🚫 إلغاء العملية']],
+                keyboard: [['🚫 إلغاء']],
                 resize_keyboard: true
             }
         }
     );
     
-    userStates.set(chatId, {
+    userSessions[chatId] = {
         type: 'awaiting_deposit_amount',
         step: 1
-    });
+    };
 }
 
 async function handleDepositAmount(chatId, text, user) {
     const amount = parseFloat(text);
     
-    if (isNaN(amount) || amount < 1 || amount > 1000) {
-        chargingBot.sendMessage(chatId,
-            '❌ *مبلغ غير صالح*\n\n' +
-            'الرجاء إدخال مبلغ بين 1$ و 1000$',
-            { parse_mode: 'Markdown' }
-        );
+    if (isNaN(amount) || amount <= 0) {
+        chargingBot.sendMessage(chatId, '❌ الرجاء إدخال مبلغ صحيح');
         return;
     }
     
@@ -623,53 +583,45 @@ async function handleDepositAmount(chatId, text, user) {
         `📋 *تعليمات الدفع:*\n` +
         `1. قم بتحويل *${amount}$* إلى:\n` +
         `   🆔 *${PAYMENT_ID}*\n` +
-        `2. بعد التحويل، أرسل *صورة إيصال الدفع*\n\n` +
-        `⚠️ *تأكد من:*\n` +
-        `• صحة المبلغ المحول\n` +
-        `• وضوح صورة الإيصال`,
+        `2. بعد التحويل، أرسل *صورة إيصال الدفع* هنا\n\n` +
+        `📸 أرسل صورة الإيصال الآن:`,
         {
             parse_mode: 'Markdown',
             reply_markup: {
-                keyboard: [['🚫 إلغاء العملية']],
+                keyboard: [['🚫 إلغاء']],
                 resize_keyboard: true
             }
         }
     );
     
-    userStates.set(chatId, {
+    userSessions[chatId] = {
         type: 'awaiting_deposit_receipt',
         amount: amount,
-        username: user.username,
-        firstName: user.firstName,
-        step: 2
-    });
+        username: user.username
+    };
 }
 
-async function handleDepositReceipt(chatId, msg, state, user) {
+async function handleDepositReceipt(chatId, msg, session, user) {
     try {
-        console.log(`📸 استلام صورة إيصال من ${chatId}`);
-        
         const photoId = msg.photo[msg.photo.length - 1].file_id;
         
         // إنشاء طلب الشحن
         const order = createOrder(chatId, 'deposit', {
-            username: state.username,
-            firstName: state.firstName,
-            amount: state.amount,
+            username: session.username,
+            amount: session.amount,
             paymentProof: photoId
         });
         
         // إرسال إشعار للإدارة
         await sendDepositNotification(order, photoId);
         
-        userStates.delete(chatId);
+        userSessions[chatId] = null;
         
         chargingBot.sendMessage(chatId,
             `✅ *تم استلام إيصال الدفع*\n\n` +
-            `💰 المبلغ: ${state.amount}$\n` +
-            `🆔 رقم الطلب: ${order.orderId}\n` +
-            `📅 الوقت: ${new Date().toLocaleString('ar-SA')}\n\n` +
-            `⏳ *جاري مراجعة الإيصال...*\n` +
+            `💰 المبلغ: ${session.amount}$\n` +
+            `🆔 رقم الطلب: ${order.orderId}\n\n` +
+            `⏳ جاري مراجعة الإيصال...\n` +
             `سيتم إعلامك عند التأكيد.`,
             {
                 parse_mode: 'Markdown',
@@ -682,31 +634,19 @@ async function handleDepositReceipt(chatId, msg, state, user) {
         
     } catch (error) {
         console.error('❌ خطأ في معالجة الإيصال:', error);
-        chargingBot.sendMessage(chatId,
-            '❌ حدث خطأ في معالجة الصورة، يرجى المحاولة مرة أخرى',
-            { parse_mode: 'Markdown' }
-        );
+        chargingBot.sendMessage(chatId, '❌ حدث خطأ في معالجة الصورة');
     }
 }
 
-// ========== دوال أخرى للمستخدمين ==========
-
 function showUserOrders(chatId) {
-    const userOrders = Array.from(orders.values())
-        .filter(o => o.userId === chatId)
-        .sort((a, b) => b.createdAt - a.createdAt);
+    const userOrders = Object.values(orders)
+        .filter(o => o.userId == chatId)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     
     if (userOrders.length === 0) {
         chargingBot.sendMessage(chatId,
-            '📭 *لا توجد طلبات سابقة*\n\n' +
-            'يمكنك البدء بطلبك الأول!',
-            {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    keyboard: [['🎮 الخدمات', '🏠 الرئيسية']],
-                    resize_keyboard: true
-                }
-            }
+            '📭 *لا توجد طلبات سابقة*',
+            { parse_mode: 'Markdown' }
         );
         return;
     }
@@ -719,13 +659,8 @@ function showUserOrders(chatId) {
         
         message += `${icon} ${order.serviceName || 'شحن رصيد'}\n`;
         message += `💰 ${order.amount}$ | ${status}\n`;
-        message += `🆔 ${order.orderId}\n`;
-        message += `📅 ${order.createdAt.toLocaleDateString('ar-SA')}\n\n`;
+        message += `🆔 ${order.orderId}\n\n`;
     });
-    
-    if (userOrders.length > 10) {
-        message += `📖 و ${userOrders.length - 10} طلباً آخر...\n\n`;
-    }
     
     chargingBot.sendMessage(chatId, message, {
         parse_mode: 'Markdown',
@@ -742,8 +677,7 @@ function showBalance(chatId, user) {
         `💵 الرصيد: *${user.balance}$*\n` +
         `🎯 الخصم: *${user.discount}%*\n` +
         `📊 إجمالي المشتريات: *${user.totalSpent}$*\n` +
-        `📦 عدد الطلبات: *${user.ordersCount}*\n\n` +
-        `💡 لشحن الرصيد، اضغط على "💳 شحن رصيد"`,
+        `📦 عدد الطلبات: *${user.ordersCount}*`,
         {
             parse_mode: 'Markdown',
             reply_markup: {
@@ -766,8 +700,8 @@ function showHelp(chatId) {
                     `2. اختر الخدمة\n` +
                     `3. أدخل ID اللعبة\n` +
                     `4. انتظر التنفيذ\n\n` +
-                    `🚫 *إلغاء العملية:*\n` +
-                    `يمكنك إلغاء أي عملية بالنقر على زر "🚫 إلغاء العملية"`;
+                    `🚫 *لإلغاء أي عملية:*\n` +
+                    `اضغط على زر "🚫 إلغاء"`;
     
     chargingBot.sendMessage(chatId, helpText, {
         parse_mode: 'Markdown',
@@ -782,7 +716,6 @@ function getStatusText(status) {
     const statusMap = {
         'pending': '⏳ قيد الانتظار',
         'pending_payment': '💳 بانتظار الدفع',
-        'processing': '🔄 جاري التنفيذ',
         'completed': '✅ مكتمل',
         'cancelled': '❌ ملغى'
     };
@@ -793,7 +726,6 @@ function getStatusText(status) {
 
 async function sendOrderNotification(order) {
     const admins = [ADMIN_ID, SECOND_ADMIN_ID];
-    let sentCount = 0;
     
     const message = `📦 *طلب خدمة جديد*\n\n` +
                    `👤 ${order.firstName || '@' + order.username}\n` +
@@ -801,17 +733,13 @@ async function sendOrderNotification(order) {
                    `🎮 ${order.serviceName}\n` +
                    `💰 ${order.amount}$\n` +
                    `🎮 ID: \`${order.gameId}\`\n` +
-                   `🆔 ${order.orderId}\n` +
-                   `📅 ${order.createdAt.toLocaleString('ar-SA')}`;
+                   `🆔 ${order.orderId}`;
     
     const keyboard = {
         inline_keyboard: [
             [
                 { text: '✅ إكمال', callback_data: `complete_${order.orderId}` },
                 { text: '❌ إلغاء', callback_data: `cancel_${order.orderId}` }
-            ],
-            [
-                { text: '💬 مراسلة', url: `tg://user?id=${order.userId}` }
             ]
         ]
     };
@@ -822,34 +750,26 @@ async function sendOrderNotification(order) {
                 parse_mode: 'Markdown',
                 reply_markup: keyboard
             });
-            sentCount++;
         } catch (error) {
             console.error(`❌ فشل إرسال إشعار للإدمن ${adminId}:`, error.message);
         }
     }
-    
-    return sentCount > 0;
 }
 
 async function sendDepositNotification(order, photoId) {
     const admins = [ADMIN_ID, SECOND_ADMIN_ID];
-    let sentCount = 0;
     
     const message = `💳 *طلب شحن جديد*\n\n` +
                    `👤 ${order.firstName || '@' + order.username}\n` +
                    `🆔 \`${order.userId}\`\n` +
                    `💰 ${order.amount}$\n` +
-                   `🆔 ${order.orderId}\n` +
-                   `📅 ${order.createdAt.toLocaleString('ar-SA')}`;
+                   `🆔 ${order.orderId}`;
     
     const keyboard = {
         inline_keyboard: [
             [
                 { text: '✅ تأكيد', callback_data: `confirm_deposit_${order.orderId}` },
                 { text: '❌ رفض', callback_data: `reject_deposit_${order.orderId}` }
-            ],
-            [
-                { text: '💬 مراسلة', url: `tg://user?id=${order.userId}` }
             ]
         ]
     };
@@ -861,35 +781,25 @@ async function sendDepositNotification(order, photoId) {
                 parse_mode: 'Markdown',
                 reply_markup: keyboard
             });
-            sentCount++;
         } catch (error) {
             console.error(`❌ فشل إرسال إشعار للإدمن ${adminId}:`, error.message);
-            
-            // إرسال رسالة بدون صورة كبديل
-            try {
-                await adminBot.sendMessage(adminId, `📸 ${message}\n\n⚠️ لا يمكن عرض الصورة`, {
-                    parse_mode: 'Markdown',
-                    reply_markup: keyboard
-                });
-                sentCount++;
-            } catch (e) {}
         }
     }
-    
-    return sentCount > 0;
 }
 
-// ========== بوت الإدارة ==========
+// ========== بوت الإدارة (@otzhabot) ==========
 
-adminBot.onText(/\/start/, async (msg) => {
+adminBot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     
-    if (!isAdmin(chatId)) {
+    if (![ADMIN_ID, SECOND_ADMIN_ID].includes(parseInt(chatId))) {
         adminBot.sendMessage(chatId, '❌ ليس لديك صلاحية للوصول');
         return;
     }
     
     console.log(`👑 أدمن دخل: ${chatId}`);
+    
+    adminSessions[chatId] = null;
     showAdminMainMenu(chatId);
 });
 
@@ -897,26 +807,28 @@ adminBot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
     
-    if (!isAdmin(chatId)) return;
+    if (![ADMIN_ID, SECOND_ADMIN_ID].includes(parseInt(chatId))) return;
+    
+    if (!text || text.startsWith('/')) return;
     
     console.log(`📩 أدمن: ${text}`);
     
-    const adminState = adminStates.get(chatId);
-    
-    if (adminState) {
-        await handleAdminState(chatId, text, adminState);
+    // زر الإلغاء يعمل في أي وقت
+    if (text === '🚫 إلغاء' || text === '🏠 الرئيسية') {
+        adminSessions[chatId] = null;
+        showAdminMainMenu(chatId);
         return;
     }
     
-    if (!text) return;
+    const session = adminSessions[chatId];
+    
+    if (session) {
+        await handleAdminSession(chatId, text, session);
+        return;
+    }
     
     // معالجة الأوامر الرئيسية
     switch(text) {
-        case '/start':
-        case '🏠 الرئيسية':
-            showAdminMainMenu(chatId);
-            break;
-            
         case '📊 الإحصائيات':
             showAdminStats(chatId);
             break;
@@ -945,40 +857,26 @@ adminBot.on('message', async (msg) => {
             showAdminMainMenu(chatId);
             break;
             
-        case '🚫 إلغاء':
-            adminStates.delete(chatId);
-            showAdminMainMenu(chatId);
-            break;
-            
         default:
-            // التحقق من أزرار إدارة الخدمات
+            // التحقق من أزرار الخدمات
             if (text.startsWith('✏️ تعديل ')) {
                 const serviceId = text.replace('✏️ تعديل ', '');
-                startEditServiceMenu(chatId, serviceId);
+                startEditServiceProcess(chatId, serviceId);
             } else if (text.startsWith('🗑️ حذف ')) {
                 const serviceId = text.replace('🗑️ حذف ', '');
-                startDeleteServiceProcess(chatId, serviceId);
+                confirmDeleteService(chatId, serviceId);
             } else if (text.startsWith('🔁 ')) {
                 const serviceId = text.replace('🔁 ', '');
                 toggleServiceStatusAndNotify(chatId, serviceId);
-            } else {
-                showAdminMainMenu(chatId);
             }
     }
 });
 
-function isAdmin(chatId) {
-    return chatId == ADMIN_ID || chatId == SECOND_ADMIN_ID;
-}
-
 function showAdminMainMenu(chatId) {
-    adminStates.delete(chatId);
-    
-    const pendingOrders = Array.from(orders.values())
+    const pendingOrders = Object.values(orders)
         .filter(o => o.status === 'pending' || o.status === 'pending_payment').length;
     
-    const activeServices = Array.from(services.values())
-        .filter(s => s.isActive).length;
+    const activeServices = Object.values(services).filter(s => s.isActive).length;
     
     const keyboard = {
         reply_markup: {
@@ -994,24 +892,22 @@ function showAdminMainMenu(chatId) {
     
     adminBot.sendMessage(chatId,
         `👑 *لوحة التحكم*\n\n` +
-        `📊 *إحصائيات سريعة:*\n` +
-        `📦 الخدمات: ${services.size} (${activeServices} مفعلة)\n` +
+        `📊 *الإحصائيات:*\n` +
+        `📦 الخدمات: ${Object.keys(services).length} (${activeServices} مفعلة)\n` +
         `📋 الطلبات النشطة: ${pendingOrders}\n` +
-        `👥 المستخدمين: ${users.size}\n\n` +
+        `👥 المستخدمين: ${Object.keys(users).length}\n\n` +
         `🎯 *اختر من القائمة:*`,
         { parse_mode: 'Markdown', ...keyboard }
     );
 }
 
-// ========== إدارة الخدمات في لوحة التحكم ==========
-
 function showServicesManagement(chatId) {
-    const allServices = Array.from(services.values())
-        .sort((a, b) => b.createdAt - a.createdAt);
+    const allServices = Object.values(services)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     
     if (allServices.length === 0) {
         adminBot.sendMessage(chatId,
-            '📭 *لا توجد خدمات*\n\n' +
+            '📭 *لا توجد خدمات*\n' +
             'استخدم "🆕 إضافة خدمة" للبدء.',
             {
                 parse_mode: 'Markdown',
@@ -1025,19 +921,13 @@ function showServicesManagement(chatId) {
     }
     
     let message = `📦 *إدارة الخدمات*\n\n`;
-    message += `📊 إجمالي: ${allServices.length}\n\n`;
     
-    // عرض الخدمات مع أزرار التحكم
-    allServices.slice(0, 5).forEach(service => {
+    allServices.slice(0, 10).forEach((service, index) => {
         const status = service.isActive ? '🟢' : '🔴';
-        message += `${status} *${service.name}*\n`;
-        message += `💰 ${service.price}$ | 📦 ${service.stock}\n`;
-        message += `🆔 ${service.id}\n\n`;
+        message += `${index + 1}. ${status} *${service.name}*\n`;
+        message += `   💰 ${service.price}$ | 📦 ${service.stock}\n`;
+        message += `   🆔 \`${service.id}\`\n\n`;
     });
-    
-    if (allServices.length > 5) {
-        message += `📖 و ${allServices.length - 5} خدمة أخرى...\n\n`;
-    }
     
     // أزرار التحكم
     const keyboardRows = [];
@@ -1069,15 +959,15 @@ function showServicesManagement(chatId) {
 }
 
 function startAddServiceProcess(chatId) {
-    adminStates.set(chatId, {
+    adminSessions[chatId] = {
         type: 'adding_service',
         step: 1,
         data: {}
-    });
+    };
     
     adminBot.sendMessage(chatId,
         `🆕 *إضافة خدمة جديدة*\n\n` +
-        `📝 *الخطوة 1:* أدخل اسم الخدمة\n` +
+        `*الخطوة 1/4:* أدخل اسم الخدمة\n` +
         `مثال: "جواهر فري فاير 5000+500"`,
         {
             parse_mode: 'Markdown',
@@ -1089,19 +979,116 @@ function startAddServiceProcess(chatId) {
     );
 }
 
-function startEditServiceMenu(chatId, serviceId) {
-    const service = services.get(serviceId);
+async function handleAdminSession(chatId, text, session) {
+    try {
+        if (session.type === 'adding_service') {
+            await handleAddServiceStep(chatId, text, session);
+        } else if (session.type === 'editing_service') {
+            await handleEditServiceStep(chatId, text, session);
+        } else if (session.type === 'deleting_service') {
+            await handleDeleteService(chatId, text, session);
+        }
+    } catch (error) {
+        console.error('❌ خطأ في معالجة جلسة الأدمن:', error);
+        adminBot.sendMessage(chatId, '❌ حدث خطأ، يرجى المحاولة مرة أخرى');
+        adminSessions[chatId] = null;
+        showAdminMainMenu(chatId);
+    }
+}
+
+async function handleAddServiceStep(chatId, text, session) {
+    switch(session.step) {
+        case 1:
+            session.data.name = text;
+            session.step = 2;
+            adminBot.sendMessage(chatId,
+                `✅ *تم حفظ الاسم*\n\n` +
+                `*الخطوة 2/4:* أدخل وصف الخدمة\n` +
+                `مثال: "اشتري 5000 جوهرة واحصل على 500 مجاناً"`,
+                { parse_mode: 'Markdown' }
+            );
+            break;
+            
+        case 2:
+            session.data.description = text;
+            session.step = 3;
+            adminBot.sendMessage(chatId,
+                `✅ *تم حفظ الوصف*\n\n` +
+                `*الخطوة 3/4:* أدخل سعر الخدمة ($)\n` +
+                `مثال: "45" أو "10.5"`,
+                { parse_mode: 'Markdown' }
+            );
+            break;
+            
+        case 3:
+            const price = parseFloat(text);
+            if (isNaN(price) || price <= 0) {
+                adminBot.sendMessage(chatId, '❌ سعر غير صالح');
+                return;
+            }
+            session.data.price = price;
+            session.step = 4;
+            adminBot.sendMessage(chatId,
+                `✅ *تم حفظ السعر*\n\n` +
+                `*الخطوة 4/4:* أدخل كمية المخزون\n` +
+                `مثال: "100"`,
+                { parse_mode: 'Markdown' }
+            );
+            break;
+            
+        case 4:
+            const stock = parseInt(text);
+            if (isNaN(stock) || stock < 0) {
+                adminBot.sendMessage(chatId, '❌ مخزون غير صالح');
+                return;
+            }
+            session.data.stock = stock;
+            
+            // إضافة الخدمة
+            const service = addService(
+                session.data.name,
+                session.data.description,
+                session.data.price,
+                session.data.stock,
+                'جواهر'
+            );
+            
+            adminSessions[chatId] = null;
+            
+            adminBot.sendMessage(chatId,
+                `🎉 *تمت إضافة الخدمة بنجاح!*\n\n` +
+                `🎮 ${service.name}\n` +
+                `💰 ${service.price}$\n` +
+                `📦 ${service.stock}\n` +
+                `🆔 ${service.id}\n\n` +
+                `✅ الخدمة متاحة الآن للمستخدمين`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
+                        resize_keyboard: true
+                    }
+                }
+            );
+            break;
+    }
+    
+    adminSessions[chatId] = session;
+}
+
+function startEditServiceProcess(chatId, serviceId) {
+    const service = services[serviceId];
     
     if (!service) {
         adminBot.sendMessage(chatId, '❌ الخدمة غير موجودة');
         return;
     }
     
-    adminStates.set(chatId, {
+    adminSessions[chatId] = {
         type: 'editing_service',
         serviceId: serviceId,
         step: 1
-    });
+    };
     
     const keyboard = {
         reply_markup: {
@@ -1129,18 +1116,103 @@ function startEditServiceMenu(chatId, serviceId) {
     );
 }
 
-function startDeleteServiceProcess(chatId, serviceId) {
-    const service = services.get(serviceId);
+async function handleEditServiceStep(chatId, text, session) {
+    const service = services[session.serviceId];
+    
+    if (!service) {
+        adminBot.sendMessage(chatId, '❌ الخدمة غير موجودة');
+        adminSessions[chatId] = null;
+        return;
+    }
+    
+    if (text.startsWith('✏️ تعديل اسم ')) {
+        session.editingField = 'name';
+        adminBot.sendMessage(chatId,
+            `✏️ *تعديل الاسم*\n\n` +
+            `الاسم الحالي: ${service.name}\n\n` +
+            `أدخل الاسم الجديد:`,
+            { parse_mode: 'Markdown' }
+        );
+    } else if (text.startsWith('✏️ تعديل وصف ')) {
+        session.editingField = 'description';
+        adminBot.sendMessage(chatId,
+            `✏️ *تعديل الوصف*\n\n` +
+            `الوصف الحالي: ${service.description}\n\n` +
+            `أدخل الوصف الجديد:`,
+            { parse_mode: 'Markdown' }
+        );
+    } else if (text.startsWith('✏️ تعديل سعر ')) {
+        session.editingField = 'price';
+        adminBot.sendMessage(chatId,
+            `✏️ *تعديل السعر*\n\n` +
+            `السعر الحالي: ${service.price}$\n\n` +
+            `أدخل السعر الجديد:`,
+            { parse_mode: 'Markdown' }
+        );
+    } else if (text.startsWith('✏️ تعديل مخزون ')) {
+        session.editingField = 'stock';
+        adminBot.sendMessage(chatId,
+            `✏️ *تعديل المخزون*\n\n` +
+            `المخزون الحالي: ${service.stock}\n\n` +
+            `أدخل المخزون الجديد:`,
+            { parse_mode: 'Markdown' }
+        );
+    } else {
+        // معالجة القيمة الجديدة
+        let value = text;
+        let isValid = true;
+        
+        if (session.editingField === 'price') {
+            value = parseFloat(text);
+            if (isNaN(value) || value <= 0) {
+                adminBot.sendMessage(chatId, '❌ سعر غير صالح');
+                isValid = false;
+            }
+        } else if (session.editingField === 'stock') {
+            value = parseInt(text);
+            if (isNaN(value) || value < 0) {
+                adminBot.sendMessage(chatId, '❌ مخزون غير صالح');
+                isValid = false;
+            }
+        }
+        
+        if (isValid) {
+            const updates = {};
+            updates[session.editingField] = value;
+            updateService(session.serviceId, updates);
+            
+            adminSessions[chatId] = null;
+            
+            adminBot.sendMessage(chatId,
+                `✅ *تم التعديل بنجاح*\n\n` +
+                `🎮 ${service.name}\n` +
+                `🔄 ${session.editingField}: ${value}`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
+                        resize_keyboard: true
+                    }
+                }
+            );
+        }
+    }
+    
+    adminSessions[chatId] = session;
+}
+
+function confirmDeleteService(chatId, serviceId) {
+    const service = services[serviceId];
     
     if (!service) {
         adminBot.sendMessage(chatId, '❌ الخدمة غير موجودة');
         return;
     }
     
-    adminStates.set(chatId, {
+    adminSessions[chatId] = {
         type: 'deleting_service',
         serviceId: serviceId
-    });
+    };
     
     const keyboard = {
         reply_markup: {
@@ -1167,194 +1239,33 @@ function startDeleteServiceProcess(chatId, serviceId) {
     );
 }
 
-async function handleAdminState(chatId, text, state) {
-    try {
-        if (text === '🚫 إلغاء') {
-            adminStates.delete(chatId);
-            showAdminMainMenu(chatId);
-            return;
-        }
-        
-        switch(state.type) {
-            case 'adding_service':
-                await handleAddServiceStep(chatId, text, state);
-                break;
-                
-            case 'editing_service':
-                await handleEditServiceStep(chatId, text, state);
-                break;
-                
-            case 'deleting_service':
-                await handleDeleteService(chatId, text, state);
-                break;
-        }
-    } catch (error) {
-        console.error('❌ خطأ في معالجة حالة الأدمن:', error);
-        adminBot.sendMessage(chatId, '❌ حدث خطأ');
-        adminStates.delete(chatId);
-        showAdminMainMenu(chatId);
-    }
-}
-
-async function handleAddServiceStep(chatId, text, state) {
-    switch(state.step) {
-        case 1:
-            state.data.name = text;
-            state.step = 2;
-            adminBot.sendMessage(chatId,
-                `✅ *تم حفظ الاسم*\n\n` +
-                `📝 *الخطوة 2:* أدخل وصف الخدمة`,
-                { parse_mode: 'Markdown' }
-            );
-            break;
-            
-        case 2:
-            state.data.description = text;
-            state.step = 3;
-            adminBot.sendMessage(chatId,
-                `✅ *تم حفظ الوصف*\n\n` +
-                `📝 *الخطوة 3:* أدخل السعر ($)`,
-                { parse_mode: 'Markdown' }
-            );
-            break;
-            
-        case 3:
-            const price = parseFloat(text);
-            if (isNaN(price) || price <= 0) {
-                adminBot.sendMessage(chatId, '❌ سعر غير صالح');
-                return;
-            }
-            state.data.price = price;
-            state.step = 4;
-            adminBot.sendMessage(chatId,
-                `✅ *تم حفظ السعر*\n\n` +
-                `📝 *الخطوة 4:* أدخل المخزون`,
-                { parse_mode: 'Markdown' }
-            );
-            break;
-            
-        case 4:
-            const stock = parseInt(text);
-            if (isNaN(stock) || stock < 0) {
-                adminBot.sendMessage(chatId, '❌ مخزون غير صالح');
-                return;
-            }
-            state.data.stock = stock;
-            
-            // إضافة الخدمة
-            const service = addService(
-                state.data.name,
-                state.data.description,
-                state.data.price,
-                state.data.stock,
-                'جواهر'
-            );
-            
-            adminStates.delete(chatId);
-            
-            adminBot.sendMessage(chatId,
-                `🎉 *تمت إضافة الخدمة*\n\n` +
-                `🎮 ${service.name}\n` +
-                `💰 ${service.price}$\n` +
-                `📦 ${service.stock}\n` +
-                `🆔 ${service.id}`,
-                {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
-                        resize_keyboard: true
-                    }
-                }
-            );
-            break;
-    }
-    
-    adminStates.set(chatId, state);
-}
-
-async function handleEditServiceStep(chatId, text, state) {
-    const service = services.get(state.serviceId);
-    if (!service) return;
-    
-    if (text.startsWith('✏️ تعديل اسم ')) {
-        state.editingField = 'name';
-        adminBot.sendMessage(chatId, 'أدخل الاسم الجديد:');
-    } else if (text.startsWith('✏️ تعديل وصف ')) {
-        state.editingField = 'description';
-        adminBot.sendMessage(chatId, 'أدخل الوصف الجديد:');
-    } else if (text.startsWith('✏️ تعديل سعر ')) {
-        state.editingField = 'price';
-        adminBot.sendMessage(chatId, 'أدخل السعر الجديد:');
-    } else if (text.startsWith('✏️ تعديل مخزون ')) {
-        state.editingField = 'stock';
-        adminBot.sendMessage(chatId, 'أدخل المخزون الجديد:');
-    } else {
-        // معالجة القيمة المدخلة
-        let value = text;
-        let isValid = true;
-        
-        if (state.editingField === 'price') {
-            value = parseFloat(text);
-            if (isNaN(value) || value <= 0) {
-                adminBot.sendMessage(chatId, '❌ سعر غير صالح');
-                isValid = false;
-            }
-        } else if (state.editingField === 'stock') {
-            value = parseInt(text);
-            if (isNaN(value) || value < 0) {
-                adminBot.sendMessage(chatId, '❌ مخزون غير صالح');
-                isValid = false;
-            }
-        }
-        
-        if (isValid) {
-            const updates = {};
-            updates[state.editingField] = value;
-            updateService(state.serviceId, updates);
-            
-            adminStates.delete(chatId);
-            
-            adminBot.sendMessage(chatId,
-                `✅ *تم التعديل بنجاح*\n\n` +
-                `🎮 ${service.name}\n` +
-                `🔄 ${state.editingField}: ${value}`,
-                {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
-                        resize_keyboard: true
-                    }
-                }
-            );
-        }
-    }
-    
-    adminStates.set(chatId, state);
-}
-
-async function handleDeleteService(chatId, text, state) {
+async function handleDeleteService(chatId, text, session) {
     if (text === '✅ نعم، احذف الخدمة') {
-        const service = services.get(state.serviceId);
+        const service = services[session.serviceId];
+        
         if (service) {
-            deleteService(state.serviceId);
+            const deleted = deleteService(session.serviceId);
             
-            adminStates.delete(chatId);
-            
-            adminBot.sendMessage(chatId,
-                `🗑️ *تم حذف الخدمة*\n\n` +
-                `🎮 ${service.name}\n` +
-                `✅ تم الحذف بنجاح`,
-                {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
-                        resize_keyboard: true
+            if (deleted) {
+                adminSessions[chatId] = null;
+                
+                adminBot.sendMessage(chatId,
+                    `🗑️ *تم حذف الخدمة*\n\n` +
+                    `🎮 ${service.name}\n` +
+                    `✅ تم الحذف بنجاح`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
+                            resize_keyboard: true
+                        }
                     }
-                }
-            );
+                );
+            }
         }
     } else {
-        adminStates.delete(chatId);
+        adminSessions[chatId] = null;
+        adminBot.sendMessage(chatId, '✅ تم إلغاء عملية الحذف');
         showAdminMainMenu(chatId);
     }
 }
@@ -1385,7 +1296,7 @@ adminBot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
     const messageId = callbackQuery.message.message_id;
     
-    if (!isAdmin(chatId)) {
+    if (![ADMIN_ID, SECOND_ADMIN_ID].includes(parseInt(chatId))) {
         adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ غير مصرح' });
         return;
     }
@@ -1404,20 +1315,6 @@ adminBot.on('callback_query', async (callbackQuery) => {
                     `🆔 ${order.orderId}\n\n` +
                     `🎉 تم التنفيذ بنجاح!`,
                     { parse_mode: 'Markdown' }
-                );
-                
-                // تحديث رسالة الأدمن
-                adminBot.editMessageText(
-                    `✅ *تم إكمال الطلب*\n\n` +
-                    `👤 ${order.firstName || '@' + order.username}\n` +
-                    `🎮 ${order.serviceName}\n` +
-                    `💰 ${order.amount}$\n` +
-                    `🆔 ${order.orderId}`,
-                    {
-                        chat_id: chatId,
-                        message_id: messageId,
-                        parse_mode: 'Markdown'
-                    }
                 );
                 
                 adminBot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم الإكمال' });
@@ -1443,20 +1340,6 @@ adminBot.on('callback_query', async (callbackQuery) => {
                     { parse_mode: 'Markdown' }
                 );
                 
-                // تحديث رسالة الأدمن
-                adminBot.editMessageText(
-                    `❌ *تم إلغاء الطلب*\n\n` +
-                    `👤 ${order.firstName || '@' + order.username}\n` +
-                    `🎮 ${order.serviceName}\n` +
-                    `💰 ${order.amount}$\n` +
-                    `💳 تم إرجاع المبلغ`,
-                    {
-                        chat_id: chatId,
-                        message_id: messageId,
-                        parse_mode: 'Markdown'
-                    }
-                );
-                
                 adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ تم الإلغاء' });
             }
             
@@ -1476,23 +1359,8 @@ adminBot.on('callback_query', async (callbackQuery) => {
                     `✅ *تم تأكيد شحن رصيدك*\n\n` +
                     `💰 ${order.amount}$\n` +
                     `💳 الرصيد الجديد: ${user.balance}$\n` +
-                    `🆔 ${order.orderId}\n\n` +
-                    `🎉 يمكنك الآن شراء الخدمات`,
-                    { parse_mode: 'Markdown' }
-                );
-                
-                // تحديث رسالة الأدمن
-                adminBot.editMessageText(
-                    `✅ *تم تأكيد الشحن*\n\n` +
-                    `👤 ${order.firstName || '@' + order.username}\n` +
-                    `💰 ${order.amount}$\n` +
-                    `💳 تم إضافة الرصيد\n` +
                     `🆔 ${order.orderId}`,
-                    {
-                        chat_id: chatId,
-                        message_id: messageId,
-                        parse_mode: 'Markdown'
-                    }
+                    { parse_mode: 'Markdown' }
                 );
                 
                 adminBot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم التأكيد' });
@@ -1512,20 +1380,6 @@ adminBot.on('callback_query', async (callbackQuery) => {
                     { parse_mode: 'Markdown' }
                 );
                 
-                // تحديث رسالة الأدمن
-                adminBot.editMessageText(
-                    `❌ *تم رفض الشحن*\n\n` +
-                    `👤 ${order.firstName || '@' + order.username}\n` +
-                    `💰 ${order.amount}$\n` +
-                    `❌ تم إبلاغ المستخدم\n` +
-                    `🆔 ${order.orderId}`,
-                    {
-                        chat_id: chatId,
-                        message_id: messageId,
-                        parse_mode: 'Markdown'
-                    }
-                );
-                
                 adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ تم الرفض' });
             }
         }
@@ -1535,14 +1389,13 @@ adminBot.on('callback_query', async (callbackQuery) => {
     }
 });
 
-// ========== دوال أخرى للوحة التحكم ==========
+// ========== دوال مساعدة للوحة التحكم ==========
 
 function showAdminStats(chatId) {
-    const totalUsers = users.size;
-    const totalOrders = orders.size;
-    const completedOrders = Array.from(orders.values())
-        .filter(o => o.status === 'completed').length;
-    const totalRevenue = Array.from(orders.values())
+    const totalUsers = Object.keys(users).length;
+    const totalOrders = Object.keys(orders).length;
+    const completedOrders = Object.values(orders).filter(o => o.status === 'completed').length;
+    const totalRevenue = Object.values(orders)
         .filter(o => o.status === 'completed')
         .reduce((sum, o) => sum + o.amount, 0);
     
@@ -1563,8 +1416,8 @@ function showAdminStats(chatId) {
 }
 
 function showAllOrders(chatId) {
-    const allOrders = Array.from(orders.values())
-        .sort((a, b) => b.createdAt - a.createdAt);
+    const allOrders = Object.values(orders)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     
     if (allOrders.length === 0) {
         adminBot.sendMessage(chatId, '📭 *لا توجد طلبات*', { parse_mode: 'Markdown' });
@@ -1592,7 +1445,7 @@ function showAllOrders(chatId) {
 }
 
 function showDepositOrders(chatId) {
-    const depositOrders = Array.from(orders.values())
+    const depositOrders = Object.values(orders)
         .filter(o => o.type === 'deposit' && o.status === 'pending_payment');
     
     if (depositOrders.length === 0) {
@@ -1614,8 +1467,8 @@ function showDepositOrders(chatId) {
 }
 
 function showUsersList(chatId) {
-    const allUsers = Array.from(users.values())
-        .sort((a, b) => b.lastActive - a.lastActive);
+    const allUsers = Object.values(users)
+        .sort((a, b) => new Date(b.lastActive) - new Date(a.lastActive));
     
     if (allUsers.length === 0) {
         adminBot.sendMessage(chatId, '👥 *لا يوجد مستخدمين*', { parse_mode: 'Markdown' });
@@ -1647,45 +1500,19 @@ console.log('🚀 بدء تشغيل نظام البوتات...');
 loadData();
 
 console.log('✅ النظام جاهز للعمل!');
-console.log(`🤖 بوت المستخدمين: @Diamouffbot`);
-console.log(`👑 بوت الإدارة: @otzhabot`);
-console.log(`📊 المستخدمين: ${users.size} | الخدمات: ${services.size} | الطلبات: ${orders.size}`);
+console.log(`🤖 بوت المستخدمين: جاهز`);
+console.log(`👑 بوت الإدارة: جاهز`);
+console.log(`📊 الخدمات: ${Object.keys(services).length}`);
+console.log(`👥 المستخدمين: ${Object.keys(users).length}`);
 
-// حفظ البيانات كل 5 دقائق
-setInterval(saveData, 5 * 60 * 1000);
-
-// تشغيل سيرفر ويب
-const PORT = process.env.PORT || 3000;
+// تشغيل سيرفر ويب بسيط
 const http = require('http');
 const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(`
-        <!DOCTYPE html>
-        <html dir="rtl">
-        <head>
-            <meta charset="UTF-8">
-            <title>نظام بوتات Free Fire</title>
-            <style>
-                body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
-                h1 { color: #333; }
-                .stats { background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px; display: inline-block; }
-                .stat { margin: 10px; font-size: 18px; }
-            </style>
-        </head>
-        <body>
-            <h1>🎮 نظام بوتات Free Fire</h1>
-            <div class="stats">
-                <div class="stat">👥 المستخدمين: ${users.size}</div>
-                <div class="stat">📦 الخدمات: ${services.size}</div>
-                <div class="stat">📋 الطلبات: ${orders.size}</div>
-                <div class="stat">✅ النظام يعمل بنجاح</div>
-            </div>
-            <p>⏰ ${new Date().toLocaleString('ar-SA')}</p>
-        </body>
-        </html>
-    `);
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end(`نظام بوتات Free Fire يعمل\nالمستخدمين: ${Object.keys(users).length}\nالطلبات: ${Object.keys(orders).length}`);
 });
 
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`🌐 السيرفر يعمل على المنفذ: ${PORT}`);
 });
