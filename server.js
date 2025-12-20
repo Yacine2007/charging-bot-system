@@ -1,4 +1,6 @@
-const TelegramBot = require('node-telegram-bot-api');
+const TelegramBot = require('node-tegram-bot-api');
+const fs = require('fs');
+const path = require('path');
 
 // === إعداد التوكنات ===
 const CHARGING_BOT_TOKEN = '8223596744:AAGHOMQ3Sjk3-X_Z7eXXnL5drAXaHXglLFg';
@@ -39,85 +41,105 @@ let orders = {};
 const userSessions = {};
 const adminSessions = {};
 
-// ========== الخدمات الافتراضية ==========
-const defaultServices = [
-    {
-        id: 'service_001',
-        name: 'جواهر فري فاير 100+10',
-        description: 'اشتري 100 جوهرة واحصل على 10 مجاناً',
-        price: 1,
-        stock: 100,
-        category: 'جواهر',
-        isActive: true,
-        createdAt: new Date().toISOString()
-    },
-    {
-        id: 'service_002',
-        name: 'جواهر فري فاير 500+50',
-        description: 'اشتري 500 جوهرة واحصل على 50 مجاناً',
-        price: 5,
-        stock: 50,
-        category: 'جواهر',
-        isActive: true,
-        createdAt: new Date().toISOString()
-    },
-    {
-        id: 'service_003',
-        name: 'جواهر فري فاير 1000+100',
-        description: 'اشتري 1000 جوهرة واحصل على 100 مجاناً',
-        price: 10,
-        stock: 30,
-        category: 'جواهر',
-        isActive: true,
-        createdAt: new Date().toISOString()
-    },
-    {
-        id: 'service_004',
-        name: 'جواهر فري فاير 5000+500',
-        description: 'اشتري 5000 جوهرة واحصل على 500 مجاناً',
-        price: 45,
-        stock: 20,
-        category: 'جواهر',
-        isActive: true,
-        createdAt: new Date().toISOString()
-    },
-    {
-        id: 'service_005',
-        name: 'جواهر فري فاير 10000+1000',
-        description: 'اشتري 10000 جوهرة واحصل على 1000 مجاناً',
-        price: 90,
-        stock: 10,
-        category: 'جواهر',
-        isActive: true,
-        createdAt: new Date().toISOString()
+// ========== نظام حفظ البيانات المحسن ==========
+const DATA_DIR = './bot_data';
+const RECEIPTS_DIR = './receipts';
+
+// إنشاء مجلدات البيانات إذا لم تكن موجودة
+if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+if (!fs.existsSync(RECEIPTS_DIR)) {
+    fs.mkdirSync(RECEIPTS_DIR, { recursive: true });
+}
+
+function saveData() {
+    try {
+        fs.writeFileSync(path.join(DATA_DIR, 'users.json'), JSON.stringify(users, null, 2));
+        fs.writeFileSync(path.join(DATA_DIR, 'services.json'), JSON.stringify(services, null, 2));
+        fs.writeFileSync(path.join(DATA_DIR, 'orders.json'), JSON.stringify(orders, null, 2));
+        console.log('✅ تم حفظ البيانات');
+    } catch (error) {
+        console.error('❌ خطأ في حفظ البيانات:', error);
     }
-];
+}
+
+function loadData() {
+    try {
+        // تحميل المستخدمين
+        if (fs.existsSync(path.join(DATA_DIR, 'users.json'))) {
+            users = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'users.json'), 'utf8'));
+        }
+        
+        // تحميل الخدمات
+        if (fs.existsSync(path.join(DATA_DIR, 'services.json'))) {
+            services = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'services.json'), 'utf8'));
+        }
+        
+        // تحميل الطلبات
+        if (fs.existsSync(path.join(DATA_DIR, 'orders.json'))) {
+            orders = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'orders.json'), 'utf8'));
+        }
+        
+        console.log(`✅ تم تحميل البيانات: ${Object.keys(users).length} مستخدم، ${Object.keys(services).length} خدمة`);
+    } catch (error) {
+        console.error('❌ خطأ في تحميل البيانات:', error);
+        initializeDefaultServices();
+    }
+}
+
+// حفظ البيانات كل دقيقة
+setInterval(saveData, 60000);
 
 // ========== تهيئة الخدمات الافتراضية ==========
 function initializeDefaultServices() {
+    const defaultServices = [
+        {
+            id: 'service_001',
+            name: 'جواهر فري فاير 100+10',
+            description: 'اشتري 100 جوهرة واحصل على 10 مجاناً',
+            price: 1,
+            stock: 100,
+            category: 'جواهر',
+            isActive: true,
+            createdAt: new Date().toISOString()
+        },
+        {
+            id: 'service_002',
+            name: 'جواهر فري فاير 500+50',
+            description: 'اشتري 500 جوهرة واحصل على 50 مجاناً',
+            price: 5,
+            stock: 50,
+            category: 'جواهر',
+            isActive: true,
+            createdAt: new Date().toISOString()
+        },
+        {
+            id: 'service_003',
+            name: 'جواهر فري فاير 1000+100',
+            description: 'اشتري 1000 جوهرة واحصل على 100 مجاناً',
+            price: 10,
+            stock: 30,
+            category: 'جواهر',
+            isActive: true,
+            createdAt: new Date().toISOString()
+        }
+    ];
+    
     defaultServices.forEach(service => {
         services[service.id] = service;
     });
+    
+    saveData();
     console.log('✅ تم تهيئة الخدمات الافتراضية');
 }
 
-// ========== تحميل البيانات ==========
-function loadData() {
-    try {
-        // تهيئة الخدمات الافتراضية دائماً
-        initializeDefaultServices();
-        console.log(`✅ الخدمات المتاحة: ${Object.keys(services).length}`);
-    } catch (error) {
-        console.error('❌ خطأ في تحميل البيانات:', error);
-    }
-}
-
-// ========== دوال إدارة الخدمات ==========
+// ========== دوال إدارة الخدمات المحسنة ==========
 function generateServiceId() {
     return 'service_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 }
 
-function addService(name, description, price, stock, category = 'جواهر') {
+function addService(name, description, price, stock, category = 'عام') {
     const serviceId = generateServiceId();
     const service = {
         id: serviceId,
@@ -132,8 +154,41 @@ function addService(name, description, price, stock, category = 'جواهر') {
     };
     
     services[serviceId] = service;
+    saveData();
     console.log(`✅ تمت إضافة خدمة: ${name}`);
     return service;
+}
+
+function updateService(serviceId, updates) {
+    if (!services[serviceId]) return null;
+    
+    const service = services[serviceId];
+    Object.assign(service, updates);
+    service.updatedAt = new Date().toISOString();
+    services[serviceId] = service;
+    saveData();
+    console.log(`✅ تم تحديث خدمة: ${service.name}`);
+    return service;
+}
+
+function deleteService(serviceId) {
+    if (!services[serviceId]) return false;
+    
+    const serviceName = services[serviceId].name;
+    delete services[serviceId];
+    saveData();
+    console.log(`✅ تم حذف خدمة: ${serviceName}`);
+    return true;
+}
+
+function toggleServiceStatus(serviceId) {
+    if (!services[serviceId]) return null;
+    
+    services[serviceId].isActive = !services[serviceId].isActive;
+    services[serviceId].updatedAt = new Date().toISOString();
+    saveData();
+    console.log(`✅ تم ${services[serviceId].isActive ? 'تفعيل' : 'تعطيل'} خدمة: ${services[serviceId].name}`);
+    return services[serviceId];
 }
 
 // ========== دوال إدارة المستخدمين ==========
@@ -152,6 +207,7 @@ function getUser(userId) {
             createdAt: new Date().toISOString(),
             language: 'ar'
         };
+        saveData();
     }
     return users[userId];
 }
@@ -161,6 +217,7 @@ function updateUser(userId, updates) {
     Object.assign(user, updates);
     user.lastActive = new Date().toISOString();
     users[userId] = user;
+    saveData();
     return user;
 }
 
@@ -184,6 +241,7 @@ function createOrder(userId, type, data) {
         serviceName: data.serviceName || '',
         gameId: data.gameId || '',
         paymentProof: data.paymentProof || '',
+        receiptPath: data.receiptPath || '',
         status: type === 'deposit' ? 'pending_payment' : 'pending',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -201,6 +259,7 @@ function createOrder(userId, type, data) {
         user.totalSpent = (user.totalSpent || 0) + data.amount;
     }
     
+    saveData();
     console.log(`✅ تم إنشاء طلب: ${orderId} للمستخدم ${userId}`);
     return order;
 }
@@ -221,7 +280,33 @@ function updateOrderStatus(orderId, status, adminId = null, notes = '') {
     }
     
     orders[orderId] = order;
+    saveData();
     return order;
+}
+
+// ========== وظيفة تحميل الصورة وتحويلها ==========
+async function downloadAndSavePhoto(fileId, orderId) {
+    try {
+        const filePath = await chargingBot.getFile(fileId);
+        const downloadUrl = `https://api.telegram.org/file/bot${CHARGING_BOT_TOKEN}/${filePath.file_path}`;
+        
+        // حفظ الصورة محلياً (اختياري)
+        const receiptFilename = `receipt_${orderId}_${Date.now()}.jpg`;
+        const receiptPath = path.join(RECEIPTS_DIR, receiptFilename);
+        
+        // يمكن إضافة حفظ محلي إذا لزم الأمر
+        // const response = await axios.get(downloadUrl, { responseType: 'stream' });
+        // response.data.pipe(fs.createWriteStream(receiptPath));
+        
+        return {
+            fileId: fileId,
+            downloadUrl: downloadUrl,
+            receiptPath: receiptPath
+        };
+    } catch (error) {
+        console.error('❌ خطأ في تحميل الصورة:', error);
+        return { fileId: fileId, error: error.message };
+    }
 }
 
 // ========== بوت المستخدمين (@Diamouffbot) ==========
@@ -250,7 +335,7 @@ chargingBot.on('message', async (msg) => {
     console.log(`📩 رسالة من ${chatId}: ${text}`);
     
     const user = getUser(chatId);
-    updateUser(chatId, {});
+    updateUser(chatId, {}); // تحديث النشاط
     
     // زر الإلغاء يعمل في أي وقت
     if (text === '🚫 إلغاء' || text === '🏠 الرئيسية') {
@@ -289,6 +374,10 @@ chargingBot.on('message', async (msg) => {
             showHelp(chatId);
             break;
             
+        case '📞 تواصل مع الإدارة':
+            showContactAdmin(chatId);
+            break;
+            
         default:
             if (text.startsWith('🎮 ')) {
                 const serviceName = text.replace('🎮 ', '').split(' - ')[0];
@@ -297,7 +386,7 @@ chargingBot.on('message', async (msg) => {
     }
 });
 
-// معالج الصور - مهم جداً
+// إضافة معالج للصور مباشرة
 chargingBot.on('photo', async (msg) => {
     const chatId = msg.chat.id;
     const session = userSessions[chatId];
@@ -305,13 +394,7 @@ chargingBot.on('photo', async (msg) => {
     if (session && session.type === 'awaiting_deposit_receipt') {
         await handleDepositReceipt(chatId, msg, session);
     } else {
-        chargingBot.sendMessage(chatId, 
-            '📸 *لإرسال صورة إيصال:*\n' +
-            '1. اضغط "💳 شحن رصيد"\n' +
-            '2. أدخل المبلغ\n' +
-            '3. أرسل الصورة هنا',
-            { parse_mode: 'Markdown' }
-        );
+        chargingBot.sendMessage(chatId, '❌ يرجى بدء عملية الشحن أولاً عبر زر "💳 شحن رصيد"');
     }
 });
 
@@ -323,7 +406,8 @@ function showMainMenu(chatId, user) {
             keyboard: [
                 ['💳 شحن رصيد', '🎮 الخدمات'],
                 ['📋 طلباتي', '💰 رصيدي'],
-                ['🆘 المساعدة', '🚫 إلغاء']
+                ['🆘 المساعدة', '📞 تواصل مع الإدارة'],
+                ['🚫 إلغاء']
             ],
             resize_keyboard: true
         }
@@ -477,6 +561,7 @@ async function handleGameId(chatId, text, session, user) {
             service.isActive = false;
         }
         services[session.serviceId] = service;
+        saveData();
     }
     
     // إنشاء الطلب
@@ -565,11 +650,9 @@ async function handleDepositAmount(chatId, text, user) {
 
 async function handleDepositReceipt(chatId, msg, session) {
     try {
-        // الحصول على أفضل جودة للصورة
-        const photo = msg.photo[msg.photo.length - 1];
-        const photoId = photo.file_id;
+        const photoId = msg.photo[msg.photo.length - 1].file_id;
         
-        console.log(`📸 تم استلام صورة إيصال من ${chatId} - File ID: ${photoId}`);
+        console.log(`📸 تم استلام صورة إيصال من ${chatId}`);
         
         // إنشاء طلب الشحن
         const order = createOrder(chatId, 'deposit', {
@@ -578,7 +661,15 @@ async function handleDepositReceipt(chatId, msg, session) {
             paymentProof: photoId
         });
         
-        // إرسال الإشعار للإدارة مع الصورة مباشرة
+        // تحميل الصورة وحفظ معلوماتها
+        const photoInfo = await downloadAndSavePhoto(photoId, order.orderId);
+        
+        // تحديث الطلب بمعلومات الصورة
+        order.receiptPath = photoInfo.receiptPath;
+        orders[order.orderId] = order;
+        saveData();
+        
+        // إرسال الإشعار للإدارة مع الصورة
         await sendDepositNotification(order, photoId);
         
         userSessions[chatId] = null;
@@ -673,6 +764,8 @@ function showHelp(chatId) {
                     `2. اختر الخدمة\n` +
                     `3. أدخل ID اللعبة\n` +
                     `4. انتظر التنفيذ\n\n` +
+                    `📞 *تواصل مع الإدارة:*\n` +
+                    `لأي استفسار أو مشكلة\n\n` +
                     `🚫 *لإلغاء أي عملية:*\n` +
                     `اضغط على زر "🚫 إلغاء"`;
     
@@ -683,6 +776,22 @@ function showHelp(chatId) {
             resize_keyboard: true
         }
     });
+}
+
+function showContactAdmin(chatId) {
+    chargingBot.sendMessage(chatId,
+        `📞 *تواصل مع الإدارة*\n\n` +
+        `للاستفسارات والشكاوى:\n` +
+        `📧 تيليجرام: @otzha_admin\n\n` +
+        `⏰ ساعات العمل: 24/7`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                keyboard: [['🏠 الرئيسية']],
+                resize_keyboard: true
+            }
+        }
+    );
 }
 
 function getStatusText(status) {
@@ -755,17 +864,14 @@ async function sendDepositNotification(order, photoId) {
             [
                 { text: '🔍 تحت المراجعة', callback_data: `review_deposit_${order.orderId}` },
                 { text: '📝 إرسال ملاحظة', callback_data: `note_deposit_${order.orderId}` }
-            ],
-            [
-                { text: '🔄 إعادة إرسال الصورة', callback_data: `resend_photo_${order.orderId}` }
             ]
         ]
     };
     
     for (const adminId of admins) {
         try {
-            // إرسال الصورة مباشرة مع البيانات
-            await adminBot.sendPhoto(adminId, photoId, {
+            // إرسال الصورة مباشرة إلى بوت الإدارة
+            await chargingBot.sendPhoto(adminId, photoId, {
                 caption: message,
                 parse_mode: 'Markdown',
                 reply_markup: keyboard
@@ -776,20 +882,12 @@ async function sendDepositNotification(order, photoId) {
         } catch (error) {
             console.error(`❌ فشل إرسال إيصال للإدمن ${adminId}:`, error.message);
             
-            // محاولة بديلة: إرسال الرسالة بدون صورة
+            // محاولة إرسال الرسالة بدون صورة كبديل
             try {
                 await adminBot.sendMessage(adminId, 
-                    `💳 *طلب شحن رصيد جديد*\n\n` +
-                    `👤 ${order.firstName || '@' + order.username}\n` +
-                    `🆔 \`${order.userId}\`\n` +
-                    `💰 *${order.amount}$*\n` +
-                    `🆔 ${order.orderId}\n` +
-                    `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}\n\n` +
-                    `⚠️ *لم يتم إرسال الصورة، File ID:* \`${photoId}\``,
-                    { 
-                        parse_mode: 'Markdown',
-                        reply_markup: keyboard 
-                    }
+                    message + '\n\n⚠️ *لم يتم إرسال الصورة*\n' +
+                    `📸 File ID: ${photoId.substring(0, 20)}...`,
+                    { parse_mode: 'Markdown' }
                 );
             } catch (err) {
                 console.error(`❌ فشل إرسال بديل:`, err.message);
@@ -858,6 +956,10 @@ adminBot.on('message', async (msg) => {
             showDepositOrders(chatId);
             break;
             
+        case '🔍 إيصالات بانتظار المراجعة':
+            showPendingReceipts(chatId);
+            break;
+            
         case '👥 المستخدمين':
             showUsersList(chatId);
             break;
@@ -870,6 +972,12 @@ adminBot.on('message', async (msg) => {
             if (text.startsWith('✏️ تعديل ')) {
                 const serviceId = text.replace('✏️ تعديل ', '');
                 startEditServiceProcess(chatId, serviceId);
+            } else if (text.startsWith('🗑️ حذف ')) {
+                const serviceId = text.replace('🗑️ حذف ', '');
+                confirmDeleteService(chatId, serviceId);
+            } else if (text.startsWith('🔁 ')) {
+                const serviceId = text.replace('🔁 ', '');
+                toggleServiceStatusAndNotify(chatId, serviceId);
             }
     }
 });
@@ -887,9 +995,10 @@ function showAdminMainMenu(chatId) {
         reply_markup: {
             keyboard: [
                 ['📦 إدارة الخدمات', '📋 الطلبات'],
-                ['💳 الشحنات', '👥 المستخدمين'],
-                ['📊 الإحصائيات', '🆕 إضافة خدمة'],
-                ['🔄 تحديث', '🚫 إلغاء']
+                ['💳 الشحنات', '🔍 إيصالات بانتظار المراجعة'],
+                ['👥 المستخدمين', '📊 الإحصائيات'],
+                ['🆕 إضافة خدمة', '🔄 تحديث'],
+                ['🚫 إلغاء']
             ],
             resize_keyboard: true
         }
@@ -939,12 +1048,16 @@ function showServicesManagement(chatId) {
     
     allServices.slice(0, 3).forEach(service => {
         keyboardRows.push([
-            `✏️ تعديل ${service.id}`
+            `✏️ تعديل ${service.id}`,
+            `🗑️ حذف ${service.id}`
+        ]);
+        keyboardRows.push([
+            `🔁 ${service.id}`
         ]);
     });
     
-    keyboardRows.push(['🆕 إضافة خدمة', '🏠 الرئيسية']);
-    keyboardRows.push(['🚫 إلغاء']);
+    keyboardRows.push(['🆕 إضافة خدمة', '📋 جميع الخدمات']);
+    keyboardRows.push(['🏠 الرئيسية', '🚫 إلغاء']);
     
     const keyboard = {
         reply_markup: {
@@ -956,7 +1069,48 @@ function showServicesManagement(chatId) {
     adminBot.sendMessage(chatId, message, {
         parse_mode: 'Markdown',
         ...keyboard
-    );
+    });
+}
+
+function showPendingReceipts(chatId) {
+    const pendingDeposits = Object.values(orders)
+        .filter(o => o.type === 'deposit' && o.status === 'pending_payment')
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    
+    if (pendingDeposits.length === 0) {
+        adminBot.sendMessage(chatId,
+            '✅ *لا توجد إيصالات بانتظار المراجعة*',
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    keyboard: [['🏠 الرئيسية']],
+                    resize_keyboard: true
+                }
+            }
+        );
+        return;
+    }
+    
+    let message = `🔍 *الإيصالات بانتظار المراجعة*\n\n`;
+    
+    pendingDeposits.forEach((order, index) => {
+        message += `${index + 1}. 💰 *${order.amount}$*\n`;
+        message += `   👤 ${order.firstName || '@' + order.username}\n`;
+        message += `   🆔 ${order.orderId}\n`;
+        message += `   📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}\n\n`;
+    });
+    
+    const keyboard = {
+        reply_markup: {
+            keyboard: [['🏠 الرئيسية']],
+            resize_keyboard: true
+        }
+    };
+    
+    adminBot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        ...keyboard
+    });
 }
 
 function startAddServiceProcess(chatId) {
@@ -986,6 +1140,8 @@ async function handleAdminSession(chatId, text, msg, session) {
             await handleAddServiceStep(chatId, text, session);
         } else if (session.type === 'editing_service') {
             await handleEditServiceStep(chatId, text, session);
+        } else if (session.type === 'deleting_service') {
+            await handleDeleteService(chatId, text, session);
         } else if (session.type === 'adding_note') {
             await handleAddNote(chatId, text, session);
         } else if (session.type === 'rejecting_deposit') {
@@ -999,6 +1155,45 @@ async function handleAdminSession(chatId, text, msg, session) {
     }
 }
 
+async function handleRejectDepositReason(chatId, text, session) {
+    const order = orders[session.orderId];
+    
+    if (order) {
+        order.status = 'rejected';
+        order.adminNotes = text;
+        order.processedBy = chatId;
+        order.processedAt = new Date().toISOString();
+        orders[session.orderId] = order;
+        saveData();
+        
+        // إشعار المستخدم
+        chargingBot.sendMessage(order.userId,
+            `❌ *تم رفض إيصال الدفع*\n\n` +
+            `💰 ${order.amount}$\n` +
+            `🆔 ${order.orderId}\n\n` +
+            `📝 السبب: ${text}\n\n` +
+            `⚠️ يرجى التحقق من الإيصال وإعادة الإرسال`,
+            { parse_mode: 'Markdown' }
+        );
+        
+        adminBot.sendMessage(chatId,
+            `❌ *تم رفض الدفع*\n\n` +
+            `👤 ${order.firstName || '@' + order.username}\n` +
+            `💰 ${order.amount}$\n` +
+            `📝 السبب: ${text}`,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    keyboard: [['💳 الشحنات', '🏠 الرئيسية']],
+                    resize_keyboard: true
+                }
+            }
+        );
+    }
+    
+    adminSessions[chatId] = null;
+}
+
 async function handleAddNote(chatId, text, session) {
     const order = orders[session.orderId];
     
@@ -1006,6 +1201,7 @@ async function handleAddNote(chatId, text, session) {
         order.adminNotes = text;
         order.updatedAt = new Date().toISOString();
         orders[session.orderId] = order;
+        saveData();
         
         // إرسال الملاحظة للمستخدم
         chargingBot.sendMessage(order.userId,
@@ -1019,29 +1215,6 @@ async function handleAddNote(chatId, text, session) {
             `✅ *تم إرسال الملاحظة للمستخدم*\n\n` +
             `👤 ${order.firstName || '@' + order.username}\n` +
             `📝 ${text}`,
-            { parse_mode: 'Markdown' }
-        );
-    }
-    
-    adminSessions[chatId] = null;
-}
-
-async function handleRejectDepositReason(chatId, text, session) {
-    const order = updateOrderStatus(session.orderId, 'rejected', chatId, text);
-    
-    if (order) {
-        // إشعار المستخدم
-        chargingBot.sendMessage(order.userId,
-            `❌ *تم رفض إيصال الدفع*\n\n` +
-            `💰 ${order.amount}$\n` +
-            `🆔 ${order.orderId}\n\n` +
-            `📝 *السبب:* ${text}\n\n` +
-            `⚠️ يرجى التحقق والمحاولة مرة أخرى`,
-            { parse_mode: 'Markdown' }
-        );
-        
-        adminBot.sendMessage(chatId,
-            `✅ *تم رفض الدفع وإرسال السبب للمستخدم*`,
             { parse_mode: 'Markdown' }
         );
     }
@@ -1143,18 +1316,28 @@ function startEditServiceProcess(chatId, serviceId) {
         step: 1
     };
     
+    const keyboard = {
+        reply_markup: {
+            keyboard: [
+                [`✏️ تعديل اسم ${serviceId}`],
+                [`✏️ تعديل وصف ${serviceId}`],
+                [`✏️ تعديل سعر ${serviceId}`],
+                [`✏️ تعديل مخزون ${serviceId}`],
+                ['🚫 إلغاء']
+            ],
+            resize_keyboard: true
+        }
+    };
+    
     adminBot.sendMessage(chatId,
         `✏️ *تعديل الخدمة*\n\n` +
         `🎮 ${service.name}\n` +
         `💰 ${service.price}$ | 📦 ${service.stock}\n` +
         `🆔 ${service.id}\n\n` +
-        `*أدخل السعر الجديد:*`,
+        `اختر ما تريد تعديله:`,
         {
             parse_mode: 'Markdown',
-            reply_markup: {
-                keyboard: [['🚫 إلغاء']],
-                resize_keyboard: true
-            }
+            ...keyboard
         }
     );
 }
@@ -1168,33 +1351,170 @@ async function handleEditServiceStep(chatId, text, session) {
         return;
     }
     
-    const price = parseFloat(text);
-    if (isNaN(price) || price <= 0) {
-        adminBot.sendMessage(chatId, '❌ سعر غير صالح');
+    if (text.startsWith('✏️ تعديل اسم ')) {
+        session.editingField = 'name';
+        adminBot.sendMessage(chatId,
+            `✏️ *تعديل الاسم*\n\n` +
+            `الاسم الحالي: ${service.name}\n\n` +
+            `أدخل الاسم الجديد:`,
+            { parse_mode: 'Markdown' }
+        );
+    } else if (text.startsWith('✏️ تعديل وصف ')) {
+        session.editingField = 'description';
+        adminBot.sendMessage(chatId,
+            `✏️ *تعديل الوصف*\n\n` +
+            `الوصف الحالي: ${service.description}\n\n` +
+            `أدخل الوصف الجديد:`,
+            { parse_mode: 'Markdown' }
+        );
+    } else if (text.startsWith('✏️ تعديل سعر ')) {
+        session.editingField = 'price';
+        adminBot.sendMessage(chatId,
+            `✏️ *تعديل السعر*\n\n` +
+            `السعر الحالي: ${service.price}$\n\n` +
+            `أدخل السعر الجديد:`,
+            { parse_mode: 'Markdown' }
+        );
+    } else if (text.startsWith('✏️ تعديل مخزون ')) {
+        session.editingField = 'stock';
+        adminBot.sendMessage(chatId,
+            `✏️ *تعديل المخزون*\n\n` +
+            `المخزون الحالي: ${service.stock}\n\n` +
+            `أدخل المخزون الجديد:`,
+            { parse_mode: 'Markdown' }
+        );
+    } else {
+        let value = text;
+        let isValid = true;
+        
+        if (session.editingField === 'price') {
+            value = parseFloat(text);
+            if (isNaN(value) || value <= 0) {
+                adminBot.sendMessage(chatId, '❌ سعر غير صالح');
+                isValid = false;
+            }
+        } else if (session.editingField === 'stock') {
+            value = parseInt(text);
+            if (isNaN(value) || value < 0) {
+                adminBot.sendMessage(chatId, '❌ مخزون غير صالح');
+                isValid = false;
+            }
+        }
+        
+        if (isValid) {
+            const updates = {};
+            updates[session.editingField] = value;
+            updateService(session.serviceId, updates);
+            
+            adminSessions[chatId] = null;
+            
+            adminBot.sendMessage(chatId,
+                `✅ *تم التعديل بنجاح*\n\n` +
+                `🎮 ${service.name}\n` +
+                `🔄 ${session.editingField}: ${value}`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
+                        resize_keyboard: true
+                    }
+                }
+            );
+        }
+    }
+    
+    adminSessions[chatId] = session;
+}
+
+function confirmDeleteService(chatId, serviceId) {
+    const service = services[serviceId];
+    
+    if (!service) {
+        adminBot.sendMessage(chatId, '❌ الخدمة غير موجودة');
         return;
     }
     
-    service.price = price;
-    service.updatedAt = new Date().toISOString();
-    services[session.serviceId] = service;
+    adminSessions[chatId] = {
+        type: 'deleting_service',
+        serviceId: serviceId
+    };
     
-    adminSessions[chatId] = null;
+    const keyboard = {
+        reply_markup: {
+            keyboard: [
+                ['✅ نعم، احذف الخدمة'],
+                ['🚫 لا، إلغاء الحذف']
+            ],
+            resize_keyboard: true
+        }
+    };
     
     adminBot.sendMessage(chatId,
-        `✅ *تم التعديل بنجاح*\n\n` +
+        `⚠️ *تأكيد حذف الخدمة*\n\n` +
         `🎮 ${service.name}\n` +
-        `💰 السعر الجديد: ${price}$`,
+        `💰 ${service.price}$\n` +
+        `📦 ${service.stock}\n` +
+        `🆔 ${service.id}\n\n` +
+        `❌ *تحذير:* لا يمكن التراجع عن الحذف!\n` +
+        `هل أنت متأكد؟`,
         {
             parse_mode: 'Markdown',
-            reply_markup: {
-                keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
-                resize_keyboard: true
-            }
+            ...keyboard
         }
     );
 }
 
-// ========== معالجة Callback Queries ==========
+async function handleDeleteService(chatId, text, session) {
+    if (text === '✅ نعم، احذف الخدمة') {
+        const service = services[session.serviceId];
+        
+        if (service) {
+            const deleted = deleteService(session.serviceId);
+            
+            if (deleted) {
+                adminSessions[chatId] = null;
+                
+                adminBot.sendMessage(chatId,
+                    `🗑️ *تم حذف الخدمة*\n\n` +
+                    `🎮 ${service.name}\n` +
+                    `✅ تم الحذف بنجاح`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
+                            resize_keyboard: true
+                        }
+                    }
+                );
+            }
+        }
+    } else {
+        adminSessions[chatId] = null;
+        adminBot.sendMessage(chatId, '✅ تم إلغاء عملية الحذف');
+        showAdminMainMenu(chatId);
+    }
+}
+
+function toggleServiceStatusAndNotify(chatId, serviceId) {
+    const service = toggleServiceStatus(serviceId);
+    
+    if (service) {
+        adminBot.sendMessage(chatId,
+            `🔄 *تم تغيير الحالة*\n\n` +
+            `🎮 ${service.name}\n` +
+            `📊 ${service.isActive ? '🟢 مفعل' : '🔴 معطل'}`,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    keyboard: [['📦 إدارة الخدمات', '🏠 الرئيسية']],
+                    resize_keyboard: true
+                }
+            }
+        );
+    }
+}
+
+// ========== معالجة Callback Queries المتقدمة ==========
 
 adminBot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
@@ -1234,10 +1554,6 @@ adminBot.on('callback_query', async (callbackQuery) => {
         } else if (data.startsWith('note_deposit_')) {
             const orderId = data.replace('note_deposit_', '');
             await startAddNoteProcess(chatId, orderId);
-            
-        } else if (data.startsWith('resend_photo_')) {
-            const orderId = data.replace('resend_photo_', '');
-            await handleResendPhoto(callbackQuery, orderId);
         }
         
     } catch (error) {
@@ -1261,6 +1577,20 @@ async function handleCompleteOrder(callbackQuery, orderId, adminId) {
         );
         
         adminBot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم الإكمال' });
+        
+        // تحديث الرسالة الأصلية
+        try {
+            await adminBot.editMessageReplyMarkup({
+                chat_id: callbackQuery.message.chat.id,
+                message_id: callbackQuery.message.message_id
+            }, {
+                inline_keyboard: [[
+                    { text: '✅ مكتمل', callback_data: 'completed' }
+                ]]
+            });
+        } catch (error) {
+            console.error('❌ خطأ في تحديث الرسالة:', error);
+        }
     }
 }
 
@@ -1308,6 +1638,20 @@ async function handleConfirmDeposit(callbackQuery, orderId, adminId) {
         );
         
         adminBot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم التأكيد' });
+        
+        // تحديث الرسالة الأصلية
+        try {
+            await adminBot.editMessageReplyMarkup({
+                chat_id: callbackQuery.message.chat.id,
+                message_id: callbackQuery.message.message_id
+            }, {
+                inline_keyboard: [[
+                    { text: '✅ تم التأكيد', callback_data: 'confirmed' }
+                ]]
+            });
+        } catch (error) {
+            console.error('❌ خطأ في تحديث الرسالة:', error);
+        }
     }
 }
 
@@ -1348,6 +1692,20 @@ async function handleReviewDeposit(callbackQuery, orderId, adminId) {
         );
         
         adminBot.answerCallbackQuery(callbackQuery.id, { text: '🔍 وضع تحت المراجعة' });
+        
+        // تحديث الرسالة الأصلية
+        try {
+            await adminBot.editMessageReplyMarkup({
+                chat_id: callbackQuery.message.chat.id,
+                message_id: callbackQuery.message.message_id
+            }, {
+                inline_keyboard: [[
+                    { text: '🔍 قيد المراجعة', callback_data: 'reviewing' }
+                ]]
+            });
+        } catch (error) {
+            console.error('❌ خطأ في تحديث الرسالة:', error);
+        }
     }
 }
 
@@ -1377,27 +1735,6 @@ async function startAddNoteProcess(chatId, orderId) {
             }
         }
     );
-}
-
-async function handleResendPhoto(callbackQuery, orderId) {
-    const order = orders[orderId];
-    
-    if (!order || !order.paymentProof) {
-        adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ لا توجد صورة' });
-        return;
-    }
-    
-    try {
-        // إعادة إرسال الصورة مباشرة
-        await adminBot.sendPhoto(callbackQuery.message.chat.id, order.paymentProof, {
-            caption: `🔄 إعادة إرسال صورة الإيصال\n🆔 ${orderId}`
-        });
-        
-        adminBot.answerCallbackQuery(callbackQuery.id, { text: '📸 تم إعادة إرسال الصورة' });
-    } catch (error) {
-        console.error('❌ خطأ في إعادة إرسال الصورة:', error);
-        adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ فشل إرسال الصورة' });
-    }
 }
 
 // ========== دوال مساعدة للوحة التحكم ==========
@@ -1488,7 +1825,7 @@ function showDepositOrders(chatId) {
             keyboard: [['🏠 الرئيسية']],
             resize_keyboard: true
         }
-    );
+    });
 }
 
 function showUsersList(chatId) {
@@ -1535,8 +1872,8 @@ console.log('✅ النظام جاهز للعمل!');
 console.log(`🤖 بوت المستخدمين (@Diamouffbot): جاهز`);
 console.log(`👑 بوت الإدارة (@otzhabot): جاهز`);
 console.log(`📊 الخدمات: ${Object.keys(services).length}`);
+console.log(`👥 المستخدمين: ${Object.keys(users).length}`);
 console.log(`💳 معرف الدفع: ${PAYMENT_ID}`);
-console.log(`👥 المدراء: ${ADMIN_ID}, ${SECOND_ADMIN_ID}`);
 
 // تشغيل سيرفر ويب بسيط
 const http = require('http');
@@ -1548,6 +1885,13 @@ const server = http.createServer((req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`🌐 السيرفر يعمل على المنفذ: ${PORT}`);
+});
+
+// حفظ البيانات عند إغلاق البرنامج
+process.on('SIGINT', () => {
+    console.log('📀 حفظ البيانات قبل الإغلاق...');
+    saveData();
+    process.exit(0);
 });
 
 console.log('🎉 تم تشغيل النظام بنجاح!');
