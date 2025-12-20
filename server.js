@@ -1,4 +1,8 @@
 const TelegramBot = require('node-telegram-bot-api');
+const fs = require('fs');
+const path = require('path');
+const https = require('https');
+const axios = require('axios');
 
 // === إعداد التوكنات ===
 const CHARGING_BOT_TOKEN = '8223596744:AAGHOMQ3Sjk3-X_Z7eXXnL5drAXaHXglLFg';
@@ -36,17 +40,46 @@ const adminBot = new TelegramBot(ADMIN_BOT_TOKEN, {
 let users = {};
 let services = {};
 let orders = {};
+let receipts = {};
 const userSessions = {};
 const adminSessions = {};
 
 // ========== نظام حفظ البيانات المحسن ==========
-const fs = require('fs');
-const path = require('path');
 const DATA_DIR = './bot_data';
+const RECEIPTS_DIR = './bot_data/receipts';
 
-// إنشاء مجلد البيانات إذا لم يكن موجوداً
+// إنشاء مجلدات البيانات إذا لم تكن موجودة
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+if (!fs.existsSync(RECEIPTS_DIR)) {
+    fs.mkdirSync(RECEIPTS_DIR, { recursive: true });
+}
+
+// دالة لتنزيل الصور
+async function downloadPhoto(fileId, botToken, orderId) {
+    try {
+        const file = await axios.get(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+        const filePath = file.data.result.file_path;
+        const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+        
+        const localPath = path.join(RECEIPTS_DIR, `${orderId}.jpg`);
+        const writer = fs.createWriteStream(localPath);
+        
+        return new Promise((resolve, reject) => {
+            https.get(downloadUrl, (response) => {
+                response.pipe(writer);
+                writer.on('finish', () => {
+                    writer.close();
+                    resolve(localPath);
+                });
+                writer.on('error', reject);
+            }).on('error', reject);
+        });
+    } catch (error) {
+        console.error('❌ خطأ في تنزيل الصورة:', error);
+        throw error;
+    }
 }
 
 function saveData() {
@@ -54,6 +87,7 @@ function saveData() {
         fs.writeFileSync(path.join(DATA_DIR, 'users.json'), JSON.stringify(users, null, 2));
         fs.writeFileSync(path.join(DATA_DIR, 'services.json'), JSON.stringify(services, null, 2));
         fs.writeFileSync(path.join(DATA_DIR, 'orders.json'), JSON.stringify(orders, null, 2));
+        fs.writeFileSync(path.join(DATA_DIR, 'receipts.json'), JSON.stringify(receipts, null, 2));
         console.log('✅ تم حفظ البيانات');
     } catch (error) {
         console.error('❌ خطأ في حفظ البيانات:', error);
@@ -75,6 +109,11 @@ function loadData() {
         // تحميل الطلبات
         if (fs.existsSync(path.join(DATA_DIR, 'orders.json'))) {
             orders = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'orders.json'), 'utf8'));
+        }
+        
+        // تحميل الإيصالات
+        if (fs.existsSync(path.join(DATA_DIR, 'receipts.json'))) {
+            receipts = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'receipts.json'), 'utf8'));
         }
         
         console.log(`✅ تم تحميل البيانات: ${Object.keys(users).length} مستخدم، ${Object.keys(services).length} خدمة`);
@@ -223,7 +262,7 @@ function generateOrderId(type) {
     return prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
 }
 
-function createOrder(userId, type, data) {
+async function createOrder(userId, type, data) {
     const orderId = generateOrderId(type);
     const user = getUser(userId);
     
@@ -240,7 +279,13 @@ function createOrder(userId, type, data) {
         status: type === 'deposit' ? 'pending_payment' : 'pending',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        notes: ''
+        notes: '',
+        adminReview: {
+            reviewedBy: null,
+            reviewedAt: null,
+            status: 'pending',
+            comments: ''
+        }
     };
     
     orders[orderId] = order;
@@ -256,7 +301,7 @@ function createOrder(userId, type, data) {
     return order;
 }
 
-function updateOrderStatus(orderId, status, adminId = null) {
+function updateOrderStatus(orderId, status, adminId = null, comments = '') {
     if (!orders[orderId]) return null;
     
     const order = orders[orderId];
@@ -266,11 +311,41 @@ function updateOrderStatus(orderId, status, adminId = null) {
     if (adminId) {
         order.processedBy = adminId;
         order.processedAt = new Date().toISOString();
+        
+        // تحديث قسم المراجعة
+        order.adminReview = {
+            reviewedBy: adminId,
+            reviewedAt: new Date().toISOString(),
+            status: status === 'completed' ? 'approved' : 'rejected',
+            comments: comments || ''
+        };
     }
     
     orders[orderId] = order;
     saveData();
     return order;
+}
+
+// ========== إدارة الإيصالات ==========
+async function saveReceipt(orderId, fileId, botToken) {
+    try {
+        const localPath = await downloadPhoto(fileId, botToken, orderId);
+        
+        receipts[orderId] = {
+            orderId: orderId,
+            fileId: fileId,
+            localPath: localPath,
+            savedAt: new Date().toISOString(),
+            status: 'active'
+        };
+        
+        saveData();
+        console.log(`✅ تم حفظ إيصال للطلب: ${orderId}`);
+        return localPath;
+    } catch (error) {
+        console.error(`❌ خطأ في حفظ إيصال: ${orderId}`, error);
+        throw error;
+    }
 }
 
 // ========== بوت المستخدمين (@Diamouffbot) ==========
@@ -519,7 +594,7 @@ async function handleGameId(chatId, text, session, user) {
     }
     
     // إنشاء الطلب
-    const order = createOrder(chatId, 'service', {
+    const order = await createOrder(chatId, 'service', {
         username: session.username,
         amount: session.price,
         serviceName: session.serviceName,
@@ -584,7 +659,7 @@ async function handleDepositAmount(chatId, text, user) {
         `1. قم بتحويل *${amount}$* إلى:\n` +
         `   🆔 *${PAYMENT_ID}*\n` +
         `2. بعد التحويل، أرسل *صورة إيصال الدفع* هنا\n\n` +
-        `📸 أرسل صورة الإيصال الآن:`,
+        `📸 *أرسل صورة الإيصال الآن:*`,
         {
             parse_mode: 'Markdown',
             reply_markup: {
@@ -606,11 +681,14 @@ async function handleDepositReceipt(chatId, msg, session, user) {
         const photoId = msg.photo[msg.photo.length - 1].file_id;
         
         // إنشاء طلب الشحن
-        const order = createOrder(chatId, 'deposit', {
+        const order = await createOrder(chatId, 'deposit', {
             username: session.username,
             amount: session.amount,
             paymentProof: photoId
         });
+        
+        // حفظ الإيصال
+        await saveReceipt(order.orderId, photoId, CHARGING_BOT_TOKEN);
         
         // إرسال إشعار للإدارة
         await sendDepositNotification(order, photoId);
@@ -634,7 +712,7 @@ async function handleDepositReceipt(chatId, msg, session, user) {
         
     } catch (error) {
         console.error('❌ خطأ في معالجة الإيصال:', error);
-        chargingBot.sendMessage(chatId, '❌ حدث خطأ في معالجة الصورة');
+        chargingBot.sendMessage(chatId, '❌ حدث خطأ في معالجة الصورة، يرجى إعادة المحاولة');
     }
 }
 
@@ -694,12 +772,14 @@ function showHelp(chatId) {
                     `1. اضغط "💳 شحن رصيد"\n` +
                     `2. أدخل المبلغ\n` +
                     `3. أرسل صورة الإيصال\n` +
-                    `4. انتظر التأكيد\n\n` +
+                    `4. انتظر التأكيد (1-5 دقائق)\n\n` +
                     `🎮 *شراء الخدمات:*\n` +
                     `1. اضغط "🎮 الخدمات"\n` +
                     `2. اختر الخدمة\n` +
                     `3. أدخل ID اللعبة\n` +
-                    `4. انتظر التنفيذ\n\n` +
+                    `4. انتظر التنفيذ (1-10 دقائق)\n\n` +
+                    `📞 *للتواصل مع الدعم:*\n` +
+                    `@otzhabot (بوت الدعم)\n\n` +
                     `🚫 *لإلغاء أي عملية:*\n` +
                     `اضغط على زر "🚫 إلغاء"`;
     
@@ -717,7 +797,8 @@ function getStatusText(status) {
         'pending': '⏳ قيد الانتظار',
         'pending_payment': '💳 بانتظار الدفع',
         'completed': '✅ مكتمل',
-        'cancelled': '❌ ملغى'
+        'cancelled': '❌ ملغى',
+        'under_review': '🔍 قيد المراجعة'
     };
     return statusMap[status] || status;
 }
@@ -739,7 +820,11 @@ async function sendOrderNotification(order) {
         inline_keyboard: [
             [
                 { text: '✅ إكمال', callback_data: `complete_${order.orderId}` },
-                { text: '❌ إلغاء', callback_data: `cancel_${order.orderId}` }
+                { text: '❌ إلغاء', callback_data: `cancel_${order.orderId}` },
+                { text: '✏️ تعليق', callback_data: `comment_${order.orderId}` }
+            ],
+            [
+                { text: '📊 تفاصيل الطلب', callback_data: `details_${order.orderId}` }
             ]
         ]
     };
@@ -763,13 +848,19 @@ async function sendDepositNotification(order, photoId) {
                    `👤 ${order.firstName || '@' + order.username}\n` +
                    `🆔 \`${order.userId}\`\n` +
                    `💰 ${order.amount}$\n` +
-                   `🆔 ${order.orderId}`;
+                   `🆔 ${order.orderId}\n\n` +
+                   `📊 *خيارات:*`;
     
     const keyboard = {
         inline_keyboard: [
             [
                 { text: '✅ تأكيد', callback_data: `confirm_deposit_${order.orderId}` },
-                { text: '❌ رفض', callback_data: `reject_deposit_${order.orderId}` }
+                { text: '❌ رفض', callback_data: `reject_deposit_${order.orderId}` },
+                { text: '✏️ تعليق', callback_data: `comment_deposit_${order.orderId}` }
+            ],
+            [
+                { text: '🔍 عرض الإيصال', callback_data: `view_receipt_${order.orderId}` },
+                { text: '📊 تفاصيل الطلب', callback_data: `deposit_details_${order.orderId}` }
             ]
         ]
     };
@@ -783,6 +874,25 @@ async function sendDepositNotification(order, photoId) {
             });
         } catch (error) {
             console.error(`❌ فشل إرسال إشعار للإدمن ${adminId}:`, error.message);
+            
+            // محاولة إرسال الرسالة بدون صورة
+            try {
+                await adminBot.sendMessage(adminId, 
+                    `💳 *طلب شحن جديد*\n\n` +
+                    `👤 ${order.firstName || '@' + order.username}\n` +
+                    `🆔 \`${order.userId}\`\n` +
+                    `💰 ${order.amount}$\n` +
+                    `🆔 ${order.orderId}\n\n` +
+                    `📸 *ملاحظة:* لم يتم تحميل صورة الإيصال\n` +
+                    `استخدم زر "🔍 عرض الإيصال" لمشاهدته`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: keyboard
+                    }
+                );
+            } catch (error2) {
+                console.error(`❌ فشل إرسال الرسالة النصية للإدمن ${adminId}:`, error2.message);
+            }
         }
     }
 }
@@ -857,6 +967,17 @@ adminBot.on('message', async (msg) => {
             showAdminMainMenu(chatId);
             break;
             
+        case '🔍 بحث':
+            adminSessions[chatId] = { type: 'searching' };
+            adminBot.sendMessage(chatId, '🔍 *ابحث عن طلب أو مستخدم:*\n\n' +
+                'أدخل:\n' +
+                '- رقم الطلب (مثل DEP_123)\n' +
+                '- ID المستخدم\n' +
+                '- اسم المستخدم (بدون @)',
+                { parse_mode: 'Markdown' }
+            );
+            break;
+            
         default:
             // التحقق من أزرار الخدمات
             if (text.startsWith('✏️ تعديل ')) {
@@ -868,15 +989,90 @@ adminBot.on('message', async (msg) => {
             } else if (text.startsWith('🔁 ')) {
                 const serviceId = text.replace('🔁 ', '');
                 toggleServiceStatusAndNotify(chatId, serviceId);
+            } else if (text.startsWith('📊 ')) {
+                const orderId = text.replace('📊 ', '');
+                showOrderDetails(chatId, orderId);
             }
     }
 });
+
+// ========== دالة البحث ==========
+async function handleAdminSession(chatId, text, session) {
+    try {
+        if (session.type === 'searching') {
+            await handleSearch(chatId, text);
+        } else if (session.type === 'adding_service') {
+            await handleAddServiceStep(chatId, text, session);
+        } else if (session.type === 'editing_service') {
+            await handleEditServiceStep(chatId, text, session);
+        } else if (session.type === 'deleting_service') {
+            await handleDeleteService(chatId, text, session);
+        } else if (session.type === 'awaiting_comment') {
+            await handleAdminComment(chatId, text, session);
+        }
+    } catch (error) {
+        console.error('❌ خطأ في معالجة جلسة الأدمن:', error);
+        adminBot.sendMessage(chatId, '❌ حدث خطأ، يرجى المحاولة مرة أخرى');
+        adminSessions[chatId] = null;
+        showAdminMainMenu(chatId);
+    }
+}
+
+async function handleSearch(chatId, text) {
+    const searchTerm = text.trim();
+    
+    // البحث عن طريق رقم الطلب
+    if (orders[searchTerm]) {
+        showOrderDetails(chatId, searchTerm);
+        return;
+    }
+    
+    // البحث عن طريق ID المستخدم
+    if (users[searchTerm]) {
+        const user = users[searchTerm];
+        const userOrders = Object.values(orders).filter(o => o.userId == searchTerm);
+        
+        adminBot.sendMessage(chatId,
+            `👤 *المستخدم*\n\n` +
+            `🆔: ${user.userId}\n` +
+            `👤: ${user.firstName || 'بدون'}\n` +
+            `📱: @${user.username || 'بدون'}\n` +
+            `💰 الرصيد: ${user.balance}$\n` +
+            `📊 الطلبات: ${user.ordersCount}\n` +
+            `💵 إجمالي المشتريات: ${user.totalSpent}$\n` +
+            `🕒 آخر نشاط: ${new Date(user.lastActive).toLocaleString('ar-SA')}`,
+            { parse_mode: 'Markdown' }
+        );
+        return;
+    }
+    
+    // البحث عن طريق اسم المستخدم
+    const userByUsername = Object.values(users).find(u => u.username === searchTerm);
+    if (userByUsername) {
+        const user = userByUsername;
+        adminBot.sendMessage(chatId,
+            `👤 *المستخدم*\n\n` +
+            `🆔: ${user.userId}\n` +
+            `👤: ${user.firstName || 'بدون'}\n` +
+            `📱: @${user.username || 'بدون'}\n` +
+            `💰 الرصيد: ${user.balance}$\n` +
+            `📊 الطلبات: ${user.ordersCount}\n` +
+            `💵 إجمالي المشتريات: ${user.totalSpent}$`,
+            { parse_mode: 'Markdown' }
+        );
+        return;
+    }
+    
+    adminBot.sendMessage(chatId, '❌ *لم يتم العثور على نتائج*\n\nحاول البحث بـ:\n- رقم الطلب\n- ID المستخدم\n- اسم المستخدم', 
+        { parse_mode: 'Markdown' });
+}
 
 function showAdminMainMenu(chatId) {
     const pendingOrders = Object.values(orders)
         .filter(o => o.status === 'pending' || o.status === 'pending_payment').length;
     
     const activeServices = Object.values(services).filter(s => s.isActive).length;
+    const pendingDeposits = Object.values(orders).filter(o => o.type === 'deposit' && o.status === 'pending_payment').length;
     
     const keyboard = {
         reply_markup: {
@@ -884,7 +1080,8 @@ function showAdminMainMenu(chatId) {
                 ['📦 إدارة الخدمات', '📋 الطلبات'],
                 ['💳 الشحنات', '👥 المستخدمين'],
                 ['📊 الإحصائيات', '🆕 إضافة خدمة'],
-                ['🔄 تحديث', '🚫 إلغاء']
+                ['🔍 بحث', '🔄 تحديث'],
+                ['🚫 إلغاء']
             ],
             resize_keyboard: true
         }
@@ -894,7 +1091,8 @@ function showAdminMainMenu(chatId) {
         `👑 *لوحة التحكم*\n\n` +
         `📊 *الإحصائيات:*\n` +
         `📦 الخدمات: ${Object.keys(services).length} (${activeServices} مفعلة)\n` +
-        `📋 الطلبات النشطة: ${pendingOrders}\n` +
+        `📋 طلبات الخدمات: ${pendingOrders}\n` +
+        `💳 طلبات الشحن: ${pendingDeposits}\n` +
         `👥 المستخدمين: ${Object.keys(users).length}\n\n` +
         `🎯 *اختر من القائمة:*`,
         { parse_mode: 'Markdown', ...keyboard }
@@ -943,7 +1141,8 @@ function showServicesManagement(chatId) {
     });
     
     keyboardRows.push(['🆕 إضافة خدمة', '📋 جميع الخدمات']);
-    keyboardRows.push(['🏠 الرئيسية', '🚫 إلغاء']);
+    keyboardRows.push(['🏠 الرئيسية', '🔍 بحث']);
+    keyboardRows.push(['🚫 إلغاء']);
     
     const keyboard = {
         reply_markup: {
@@ -977,23 +1176,6 @@ function startAddServiceProcess(chatId) {
             }
         }
     );
-}
-
-async function handleAdminSession(chatId, text, session) {
-    try {
-        if (session.type === 'adding_service') {
-            await handleAddServiceStep(chatId, text, session);
-        } else if (session.type === 'editing_service') {
-            await handleEditServiceStep(chatId, text, session);
-        } else if (session.type === 'deleting_service') {
-            await handleDeleteService(chatId, text, session);
-        }
-    } catch (error) {
-        console.error('❌ خطأ في معالجة جلسة الأدمن:', error);
-        adminBot.sendMessage(chatId, '❌ حدث خطأ، يرجى المحاولة مرة أخرى');
-        adminSessions[chatId] = null;
-        showAdminMainMenu(chatId);
-    }
 }
 
 async function handleAddServiceStep(chatId, text, session) {
@@ -1289,7 +1471,7 @@ function toggleServiceStatusAndNotify(chatId, serviceId) {
     }
 }
 
-// ========== معالجة Callback Queries ==========
+// ========== معالجة Callback Queries المحسنة ==========
 
 adminBot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
@@ -1318,6 +1500,7 @@ adminBot.on('callback_query', async (callbackQuery) => {
                 );
                 
                 adminBot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم الإكمال' });
+                adminBot.sendMessage(chatId, `✅ تم إكمال الطلب ${orderId}`);
             }
             
         } else if (data.startsWith('cancel_')) {
@@ -1341,6 +1524,7 @@ adminBot.on('callback_query', async (callbackQuery) => {
                 );
                 
                 adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ تم الإلغاء' });
+                adminBot.sendMessage(chatId, `❌ تم إلغاء الطلب ${orderId}`);
             }
             
         } else if (data.startsWith('confirm_deposit_')) {
@@ -1359,11 +1543,13 @@ adminBot.on('callback_query', async (callbackQuery) => {
                     `✅ *تم تأكيد شحن رصيدك*\n\n` +
                     `💰 ${order.amount}$\n` +
                     `💳 الرصيد الجديد: ${user.balance}$\n` +
-                    `🆔 ${order.orderId}`,
+                    `🆔 ${order.orderId}\n\n` +
+                    `🎉 تمت العملية بنجاح!`,
                     { parse_mode: 'Markdown' }
                 );
                 
                 adminBot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم التأكيد' });
+                adminBot.sendMessage(chatId, `✅ تم تأكيد شحن ${order.amount}$ للطلب ${orderId}`);
             }
             
         } else if (data.startsWith('reject_deposit_')) {
@@ -1376,13 +1562,47 @@ adminBot.on('callback_query', async (callbackQuery) => {
                     `❌ *فشل تأكيد الدفع*\n\n` +
                     `💰 ${order.amount}$\n` +
                     `🆔 ${order.orderId}\n\n` +
-                    `⚠️ يرجى التحقق والمحاولة مرة أخرى`,
+                    `⚠️ يرجى التحقق من الإيصال والمحاولة مرة أخرى`,
                     { parse_mode: 'Markdown' }
                 );
                 
                 adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ تم الرفض' });
+                adminBot.sendMessage(chatId, `❌ تم رفض طلب الشحن ${orderId}`);
             }
+            
+        } else if (data.startsWith('comment_') || data.startsWith('comment_deposit_')) {
+            const orderId = data.startsWith('comment_deposit_') ? 
+                data.replace('comment_deposit_', '') : 
+                data.replace('comment_', '');
+            
+            adminSessions[chatId] = {
+                type: 'awaiting_comment',
+                orderId: orderId
+            };
+            
+            adminBot.answerCallbackQuery(callbackQuery.id, { text: '📝 أرسل التعليق' });
+            
+            adminBot.sendMessage(chatId,
+                `📝 *إضافة تعليق للطلب*\n\n` +
+                `🆔 ${orderId}\n\n` +
+                `أدخل تعليقك:`,
+                { parse_mode: 'Markdown' }
+            );
+            
+        } else if (data.startsWith('view_receipt_')) {
+            const orderId = data.replace('view_receipt_', '');
+            await showReceiptImage(chatId, orderId);
+            adminBot.answerCallbackQuery(callbackQuery.id, { text: '📸 جاري تحميل الإيصال' });
+            
+        } else if (data.startsWith('details_') || data.startsWith('deposit_details_')) {
+            const orderId = data.startsWith('deposit_details_') ? 
+                data.replace('deposit_details_', '') : 
+                data.replace('details_', '');
+            
+            showOrderDetails(chatId, orderId);
+            adminBot.answerCallbackQuery(callbackQuery.id, { text: '📊 جاري تحميل التفاصيل' });
         }
+        
     } catch (error) {
         console.error('❌ خطأ في Callback:', error);
         adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ حدث خطأ' });
@@ -1391,20 +1611,220 @@ adminBot.on('callback_query', async (callbackQuery) => {
 
 // ========== دوال مساعدة للوحة التحكم ==========
 
+async function showReceiptImage(chatId, orderId) {
+    const order = orders[orderId];
+    if (!order) {
+        adminBot.sendMessage(chatId, '❌ الطلب غير موجود');
+        return;
+    }
+    
+    if (order.type !== 'deposit') {
+        adminBot.sendMessage(chatId, '❌ هذا الطلب ليس شحن رصيد');
+        return;
+    }
+    
+    // محاولة إرسال الصورة المحفوظة
+    const receipt = receipts[orderId];
+    if (receipt && receipt.localPath && fs.existsSync(receipt.localPath)) {
+        try {
+            await adminBot.sendPhoto(chatId, receipt.localPath, {
+                caption: `📸 *إيصال الدفع*\n\n` +
+                        `🆔 ${orderId}\n` +
+                        `👤 ${order.firstName || '@' + order.username}\n` +
+                        `💰 ${order.amount}$\n` +
+                        `🕒 ${new Date(order.createdAt).toLocaleString('ar-SA')}`,
+                parse_mode: 'Markdown'
+            });
+        } catch (error) {
+            console.error('❌ خطأ في إرسال الصورة المحفوظة:', error);
+            // محاولة استخدام fileId
+            await sendReceiptFromFileId(chatId, order);
+        }
+    } else {
+        // محاولة استخدام fileId
+        await sendReceiptFromFileId(chatId, order);
+    }
+}
+
+async function sendReceiptFromFileId(chatId, order) {
+    if (order.paymentProof) {
+        try {
+            await adminBot.sendPhoto(chatId, order.paymentProof, {
+                caption: `📸 *إيصال الدفع*\n\n` +
+                        `🆔 ${order.orderId}\n` +
+                        `👤 ${order.firstName || '@' + order.username}\n` +
+                        `💰 ${order.amount}$\n` +
+                        `🕒 ${new Date(order.createdAt).toLocaleString('ar-SA')}`,
+                parse_mode: 'Markdown'
+            });
+        } catch (error) {
+            console.error('❌ خطأ في إرسال الصورة من fileId:', error);
+            adminBot.sendMessage(chatId,
+                `📸 *إيصال الدفع*\n\n` +
+                `🆔 ${order.orderId}\n` +
+                `👤 ${order.firstName || '@' + order.username}\n` +
+                `💰 ${order.amount}$\n` +
+                `🕒 ${new Date(order.createdAt).toLocaleString('ar-SA')}\n\n` +
+                `⚠️ *لم يتمكن النظام من تحميل الصورة*\n` +
+                `قد تكون الصورة محذوفة أو غير متاحة`,
+                { parse_mode: 'Markdown' }
+            );
+        }
+    } else {
+        adminBot.sendMessage(chatId,
+            `📸 *إيصال الدفع*\n\n` +
+            `🆔 ${order.orderId}\n` +
+            `👤 ${order.firstName || '@' + order.username}\n` +
+            `💰 ${order.amount}$\n\n` +
+            `⚠️ *لا يوجد إيصال متاح*`,
+            { parse_mode: 'Markdown' }
+        );
+    }
+}
+
+function showOrderDetails(chatId, orderId) {
+    const order = orders[orderId];
+    if (!order) {
+        adminBot.sendMessage(chatId, '❌ الطلب غير موجود');
+        return;
+    }
+    
+    const user = getUser(order.userId);
+    const statusText = getStatusText(order.status);
+    const typeText = order.type === 'deposit' ? '💳 شحن رصيد' : '🎮 خدمة';
+    
+    let message = `📊 *تفاصيل الطلب*\n\n`;
+    message += `🆔: ${order.orderId}\n`;
+    message += `📋: ${typeText}\n`;
+    message += `📊: ${statusText}\n`;
+    message += `💰: ${order.amount}$\n`;
+    message += `👤: ${order.firstName || 'بدون'} (@${order.username || 'بدون'})\n`;
+    message += `🆔 المستخدم: \`${order.userId}\`\n`;
+    
+    if (order.type === 'service') {
+        message += `🎮: ${order.serviceName}\n`;
+        message += `🎮 ID: \`${order.gameId}\`\n`;
+    } else if (order.type === 'deposit') {
+        message += `📸: ${order.paymentProof ? '✅' : '❌'}\n`;
+    }
+    
+    message += `🕒 الإنشاء: ${new Date(order.createdAt).toLocaleString('ar-SA')}\n`;
+    
+    if (order.processedAt) {
+        message += `🕒 المعالجة: ${new Date(order.processedAt).toLocaleString('ar-SA')}\n`;
+        message += `👨‍💼 المعالج: ${order.processedBy}\n`;
+    }
+    
+    // إضافة تفاصيل المراجعة
+    if (order.adminReview && order.adminReview.reviewedBy) {
+        message += `\n📝 *المراجعة:*\n`;
+        message += `✅: ${order.adminReview.reviewedBy}\n`;
+        message += `🕒: ${new Date(order.adminReview.reviewedAt).toLocaleString('ar-SA')}\n`;
+        message += `📌: ${order.adminReview.comments || 'لا يوجد تعليقات'}\n`;
+    }
+    
+    const keyboard = {
+        inline_keyboard: []
+    };
+    
+    if (order.type === 'deposit') {
+        if (order.status === 'pending_payment') {
+            keyboard.inline_keyboard.push([
+                { text: '✅ تأكيد', callback_data: `confirm_deposit_${orderId}` },
+                { text: '❌ رفض', callback_data: `reject_deposit_${orderId}` },
+                { text: '✏️ تعليق', callback_data: `comment_deposit_${orderId}` }
+            ]);
+        }
+        keyboard.inline_keyboard.push([
+            { text: '🔍 عرض الإيصال', callback_data: `view_receipt_${orderId}` }
+        ]);
+    } else {
+        if (order.status === 'pending') {
+            keyboard.inline_keyboard.push([
+                { text: '✅ إكمال', callback_data: `complete_${orderId}` },
+                { text: '❌ إلغاء', callback_data: `cancel_${orderId}` },
+                { text: '✏️ تعليق', callback_data: `comment_${orderId}` }
+            ]);
+        }
+    }
+    
+    keyboard.inline_keyboard.push([
+        { text: '👤 عرض المستخدم', url: `tg://user?id=${order.userId}` }
+    ]);
+    
+    adminBot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+    });
+}
+
+async function handleAdminComment(chatId, text, session) {
+    const orderId = session.orderId;
+    const order = orders[orderId];
+    
+    if (!order) {
+        adminBot.sendMessage(chatId, '❌ الطلب غير موجود');
+        adminSessions[chatId] = null;
+        return;
+    }
+    
+    // تحديث التعليق
+    if (!order.adminReview) {
+        order.adminReview = {};
+    }
+    order.adminReview.comments = text;
+    order.adminReview.reviewedBy = chatId;
+    order.adminReview.reviewedAt = new Date().toISOString();
+    
+    orders[orderId] = order;
+    saveData();
+    
+    // إرسال إشعار للمستخدم
+    chargingBot.sendMessage(order.userId,
+        `📝 *تحديث على طلبك*\n\n` +
+        `🆔 ${order.orderId}\n` +
+        `📌 تعليق الأدمن: ${text}\n\n` +
+        `⏳ جاري معالجة طلبك...`,
+        { parse_mode: 'Markdown' }
+    );
+    
+    adminSessions[chatId] = null;
+    
+    adminBot.sendMessage(chatId,
+        `✅ *تم إضافة التعليق*\n\n` +
+        `🆔 ${orderId}\n` +
+        `📝 ${text}`,
+        { parse_mode: 'Markdown' }
+    );
+}
+
 function showAdminStats(chatId) {
     const totalUsers = Object.keys(users).length;
     const totalOrders = Object.keys(orders).length;
     const completedOrders = Object.values(orders).filter(o => o.status === 'completed').length;
+    const pendingOrders = Object.values(orders).filter(o => o.status === 'pending').length;
+    const pendingDeposits = Object.values(orders).filter(o => o.type === 'deposit' && o.status === 'pending_payment').length;
     const totalRevenue = Object.values(orders)
         .filter(o => o.status === 'completed')
         .reduce((sum, o) => sum + o.amount, 0);
     
+    const today = new Date().toISOString().split('T')[0];
+    const todayOrders = Object.values(orders)
+        .filter(o => o.createdAt.split('T')[0] === today);
+    const todayRevenue = todayOrders
+        .filter(o => o.status === 'completed')
+        .reduce((sum, o) => sum + o.amount, 0);
+    
     adminBot.sendMessage(chatId,
-        `📊 *إحصائيات*\n\n` +
+        `📊 *إحصائيات مفصلة*\n\n` +
         `👥 المستخدمين: ${totalUsers}\n` +
-        `📦 الطلبات: ${totalOrders}\n` +
+        `📦 الطلبات الكلية: ${totalOrders}\n` +
         `✅ المكتملة: ${completedOrders}\n` +
-        `💰 الإيرادات: ${totalRevenue.toFixed(2)}$`,
+        `⏳ المنتظرة: ${pendingOrders}\n` +
+        `💳 الشحنات المنتظرة: ${pendingDeposits}\n\n` +
+        `💰 الإيرادات الكلية: ${totalRevenue.toFixed(2)}$\n` +
+        `📅 إيرادات اليوم: ${todayRevenue.toFixed(2)}$\n` +
+        `📦 طلبات اليوم: ${todayOrders.length}`,
         {
             parse_mode: 'Markdown',
             reply_markup: {
@@ -1424,23 +1844,42 @@ function showAllOrders(chatId) {
         return;
     }
     
-    let message = '📋 *جميع الطلبات*\n\n';
+    // تصنيف الطلبات
+    const pendingOrders = allOrders.filter(o => o.status === 'pending' || o.status === 'pending_payment');
+    const completedOrders = allOrders.filter(o => o.status === 'completed');
+    const cancelledOrders = allOrders.filter(o => o.status === 'cancelled');
     
-    allOrders.slice(0, 10).forEach(order => {
+    let message = '📋 *لوحة الطلبات*\n\n';
+    message += `⏳ قيد الانتظار: ${pendingOrders.length}\n`;
+    message += `✅ مكتملة: ${completedOrders.length}\n`;
+    message += `❌ ملغية: ${cancelledOrders.length}\n\n`;
+    
+    message += '📦 *أحدث الطلبات:*\n\n';
+    
+    allOrders.slice(0, 5).forEach(order => {
         const icon = order.type === 'deposit' ? '💳' : '🎮';
         const status = getStatusText(order.status);
         
         message += `${icon} ${order.serviceName || 'شحن رصيد'}\n`;
         message += `👤 @${order.username} | 💰 ${order.amount}$\n`;
-        message += `🆔 ${order.orderId} | ${status}\n\n`;
+        message += `🆔 ${order.orderId} | ${status}\n`;
+        message += `📊 ${order.adminReview?.comments ? '📝' : ''}\n\n`;
     });
+    
+    const keyboard = {
+        reply_markup: {
+            keyboard: [
+                ['📋 الطلبات النشطة', '📋 الطلبات المكتملة'],
+                ['📊 تفاصيل الطلبات', '🔍 بحث عن طلب'],
+                ['🏠 الرئيسية']
+            ],
+            resize_keyboard: true
+        }
+    };
     
     adminBot.sendMessage(chatId, message, {
         parse_mode: 'Markdown',
-        reply_markup: {
-            keyboard: [['🏠 الرئيسية']],
-            resize_keyboard: true
-        }
+        ...keyboard
     });
 }
 
@@ -1453,34 +1892,24 @@ function showDepositOrders(chatId) {
         return;
     }
     
-    adminBot.sendMessage(chatId,
-        `💳 *طلبات الشحن*\n\n` +
-        `📊 بانتظار التأكيد: ${depositOrders.length}`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                keyboard: [['🏠 الرئيسية']],
-                resize_keyboard: true
-            }
-        }
-    );
-}
-
-function showUsersList(chatId) {
-    const allUsers = Object.values(users)
-        .sort((a, b) => new Date(b.lastActive) - new Date(a.lastActive));
+    let message = `💳 *طلبات الشحن*\n\n`;
+    message += `📊 بانتظار التأكيد: ${depositOrders.length}\n\n`;
     
-    if (allUsers.length === 0) {
-        adminBot.sendMessage(chatId, '👥 *لا يوجد مستخدمين*', { parse_mode: 'Markdown' });
-        return;
-    }
+    depositOrders.slice(0, 5).forEach(order => {
+        message += `💰 ${order.amount}$\n`;
+        message += `👤 ${order.firstName || '@' + order.username}\n`;
+        message += `🆔 ${order.orderId}\n\n`;
+    });
     
-    let message = '👥 *المستخدمين*\n\n';
+    const keyboard = {
+        inline_keyboard: []
+    };
     
-    allUsers.slice(0, 10).forEach(user => {
-        message += `👤 ${user.firstName || '@' + user.username}\n`;
-        message += `💰 ${user.balance}$ | 📦 ${user.ordersCount}\n`;
-        message += `🆔 ${user.userId}\n\n`;
+    depositOrders.slice(0, 3).forEach(order => {
+        keyboard.inline_keyboard.push([
+            { text: `✅ ${order.orderId}`, callback_data: `confirm_deposit_${order.orderId}` },
+            { text: `❌ ${order.orderId}`, callback_data: `reject_deposit_${order.orderId}` }
+        ]);
     });
     
     adminBot.sendMessage(chatId, message, {
@@ -1492,6 +1921,54 @@ function showUsersList(chatId) {
     });
 }
 
+function showUsersList(chatId) {
+    const allUsers = Object.values(users)
+        .sort((a, b) => new Date(b.lastActive) - new Date(a.lastActive));
+    
+    if (allUsers.length === 0) {
+        adminBot.sendMessage(chatId, '👥 *لا يوجد مستخدمين*', { parse_mode: 'Markdown' });
+        return;
+    }
+    
+    // تصنيف المستخدمين
+    const activeUsers = allUsers.filter(u => {
+        const lastActive = new Date(u.lastActive);
+        const now = new Date();
+        const diffDays = (now - lastActive) / (1000 * 60 * 60 * 24);
+        return diffDays < 7;
+    });
+    
+    const topSpenders = [...allUsers].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 5);
+    
+    let message = '👥 *إدارة المستخدمين*\n\n';
+    message += `📊 المستخدمين الكلي: ${allUsers.length}\n`;
+    message += `🟢 النشطون (أسبوع): ${activeUsers.length}\n\n`;
+    
+    message += '🏆 *أكثر المستخدمين إنفاقاً:*\n\n';
+    
+    topSpenders.forEach((user, index) => {
+        message += `${index + 1}. ${user.firstName || '@' + user.username}\n`;
+        message += `   💰 ${user.totalSpent}$ | 📦 ${user.ordersCount}\n`;
+        message += `   🆔 \`${user.userId}\`\n\n`;
+    });
+    
+    const keyboard = {
+        reply_markup: {
+            keyboard: [
+                ['👥 المستخدمين النشطين', '👥 المستخدمين الجدد'],
+                ['💰 تعديل رصيد مستخدم', '🎯 تعديل خصم مستخدم'],
+                ['🏠 الرئيسية']
+            ],
+            resize_keyboard: true
+        }
+    };
+    
+    adminBot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        ...keyboard
+    });
+}
+
 // ========== تشغيل النظام ==========
 
 console.log('🚀 بدء تشغيل نظام البوتات...');
@@ -1499,22 +1976,116 @@ console.log('🚀 بدء تشغيل نظام البوتات...');
 // تحميل البيانات
 loadData();
 
+// تثبيت حزم npm المطلوبة
+console.log('📦 التأكد من حزم Node.js...');
+try {
+    // التأكد من وجود axios
+    require('axios');
+    console.log('✅ حزمة axios مثبتة');
+} catch (error) {
+    console.log('❌ يرجى تثبيت axios: npm install axios');
+    process.exit(1);
+}
+
 console.log('✅ النظام جاهز للعمل!');
-console.log(`🤖 بوت المستخدمين: جاهز`);
-console.log(`👑 بوت الإدارة: جاهز`);
+console.log(`🤖 بوت المستخدمين (@Diamouffbot): جاهز`);
+console.log(`👑 بوت الإدارة (@otzhabot): جاهز`);
 console.log(`📊 الخدمات: ${Object.keys(services).length}`);
 console.log(`👥 المستخدمين: ${Object.keys(users).length}`);
+console.log(`📦 الطلبات: ${Object.keys(orders).length}`);
 
 // تشغيل سيرفر ويب بسيط
 const http = require('http');
 const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(`نظام بوتات Free Fire يعمل\nالمستخدمين: ${Object.keys(users).length}\nالطلبات: ${Object.keys(orders).length}`);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    
+    const stats = `
+        <html dir="rtl">
+        <head>
+            <title>نظام بوتات Free Fire</title>
+            <meta charset="UTF-8">
+            <style>
+                body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+                .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
+                .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin: 20px 0; }
+                .stat-box { background: #f8f9fa; padding: 15px; border-radius: 8px; border-right: 4px solid #007bff; }
+                .stat-title { color: #333; font-weight: bold; margin-bottom: 5px; }
+                .stat-value { color: #007bff; font-size: 24px; }
+                .status { padding: 10px; border-radius: 5px; margin: 5px 0; }
+                .online { background: #d4edda; color: #155724; }
+                .offline { background: #f8d7da; color: #721c24; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🚀 نظام بوتات Free Fire</h1>
+                <p>نظام إدارة خدمات شحن Free Fire</p>
+                
+                <div class="stats">
+                    <div class="stat-box">
+                        <div class="stat-title">👥 المستخدمين</div>
+                        <div class="stat-value">${Object.keys(users).length}</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-title">📦 الخدمات</div>
+                        <div class="stat-value">${Object.keys(services).length}</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-title">📊 الطلبات</div>
+                        <div class="stat-value">${Object.keys(orders).length}</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-title">💵 الإيرادات</div>
+                        <div class="stat-value">${Object.values(orders)
+                            .filter(o => o.status === 'completed')
+                            .reduce((sum, o) => sum + o.amount, 0).toFixed(2)}$</div>
+                    </div>
+                </div>
+                
+                <div class="status online">
+                    ✅ النظام يعمل بشكل طبيعي
+                </div>
+                
+                <h3>البوتات:</h3>
+                <div class="status online">🤖 بوت المستخدمين (@Diamouffbot) - نشط</div>
+                <div class="status online">👑 بوت الإدارة (@otzhabot) - نشط</div>
+                
+                <p style="margin-top: 30px; color: #666; text-align: center;">
+                    آخر تحديث: ${new Date().toLocaleString('ar-SA')}
+                </p>
+            </div>
+        </body>
+        </html>
+    `;
+    
+    res.end(stats);
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`🌐 السيرفر يعمل على المنفذ: ${PORT}`);
+    console.log(`🌐 رابط الإحصائيات: http://localhost:${PORT}`);
 });
 
 console.log('🎉 تم تشغيل النظام بنجاح!');
+
+// فحص دوري للنظام
+setInterval(() => {
+    console.log('🔍 فحص النظام...');
+    console.log(`📊 المستخدمين النشطين: ${Object.values(users).length}`);
+    console.log(`📦 الطلبات المنتظرة: ${Object.values(orders).filter(o => o.status === 'pending' || o.status === 'pending_payment').length}`);
+    
+    // تنظيف الجلسات القديمة
+    const now = Date.now();
+    for (const [userId, session] of Object.entries(userSessions)) {
+        if (session && session.createdAt && (now - session.createdAt > 3600000)) { // ساعة واحدة
+            delete userSessions[userId];
+        }
+    }
+    
+    for (const [adminId, session] of Object.entries(adminSessions)) {
+        if (session && session.createdAt && (now - session.createdAt > 1800000)) { // نصف ساعة
+            delete adminSessions[adminId];
+        }
+    }
+}, 300000); // كل 5 دقائق
