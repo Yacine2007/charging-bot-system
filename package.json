@@ -1,7 +1,7 @@
 {
   "name": "charging-bot-system",
   "version": "1.0.0",
-  "description": "نظام بوت الشحن والإدارة",
+  "description": "Telegram charging bot with admin control buttons",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
