@@ -41,11 +41,10 @@ let orders = {};
 const userSessions = {};
 const adminSessions = {};
 
-// ========== نظام حفظ البيانات المحسن ==========
+// ========== نظام حفظ البيانات ==========
 const DATA_DIR = './bot_data';
-const RECEIPTS_DIR = './receipts';
 
-// إنشاء مجلدات البيانات إذا لم تكن موجودة
+// إنشاء مجلد البيانات إذا لم يكن موجوداً
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
 }
@@ -71,6 +70,8 @@ function loadData() {
         // تحميل الخدمات
         if (fs.existsSync(path.join(DATA_DIR, 'services.json'))) {
             services = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'services.json'), 'utf8'));
+        } else {
+            initializeDefaultServices();
         }
         
         // تحميل الطلبات
@@ -120,6 +121,26 @@ function initializeDefaultServices() {
             category: 'جواهر',
             isActive: true,
             createdAt: new Date().toISOString()
+        },
+        {
+            id: 'service_004',
+            name: 'جواهر فري فاير 2000+200',
+            description: 'اشتري 2000 جوهرة واحصل على 200 مجاناً',
+            price: 20,
+            stock: 20,
+            category: 'جواهر',
+            isActive: true,
+            createdAt: new Date().toISOString()
+        },
+        {
+            id: 'service_005',
+            name: 'جواهر فري فاير 5000+500',
+            description: 'اشتري 5000 جوهرة واحصل على 500 مجاناً',
+            price: 50,
+            stock: 10,
+            category: 'جواهر',
+            isActive: true,
+            createdAt: new Date().toISOString()
         }
     ];
     
@@ -131,12 +152,12 @@ function initializeDefaultServices() {
     console.log('✅ تم تهيئة الخدمات الافتراضية');
 }
 
-// ========== دوال إدارة الخدمات المحسنة ==========
+// ========== دوال إدارة الخدمات ==========
 function generateServiceId() {
     return 'service_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 }
 
-function addService(name, description, price, stock, category = 'عام') {
+function addService(name, description, price, stock, category = 'جواهر') {
     const serviceId = generateServiceId();
     const service = {
         id: serviceId,
@@ -280,24 +301,63 @@ function updateOrderStatus(orderId, status, adminId = null, notes = '') {
     return order;
 }
 
-// ========== إرسال الصور مباشرة للإدارة ==========
-async function forwardPhotoToAdmins(photoId, orderId, caption = '') {
+// ========== إرسال الصور إلى لوحة التحكم ==========
+async function sendReceiptToAdmin(order, photoId) {
     const admins = [ADMIN_ID, SECOND_ADMIN_ID];
     
+    const caption = `💳 *إيصال دفع جديد*\n\n` +
+                   `👤 ${order.firstName || '@' + order.username}\n` +
+                   `🆔 \`${order.userId}\`\n` +
+                   `💰 *${order.amount}$*\n` +
+                   `🆔 ${order.orderId}\n` +
+                   `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}`;
+    
+    // إرسال الصورة مباشرة إلى كل أدمن
     for (const adminId of admins) {
         try {
             await adminBot.sendPhoto(adminId, photoId, {
                 caption: caption,
                 parse_mode: 'Markdown'
             });
-            console.log(`✅ تم إرسال الصورة ${orderId} إلى الأدمن ${adminId}`);
+            console.log(`✅ تم إرسال الصورة ${order.orderId} إلى الأدمن ${adminId}`);
         } catch (error) {
             console.error(`❌ فشل إرسال الصورة للإدمن ${adminId}:`, error.message);
         }
     }
+    
+    // إرسال رسالة التحكم المنفصلة
+    const controlMessage = `🔧 *إدارة طلب الشحن*\n\n` +
+                          `🆔 ${order.orderId}\n` +
+                          `👤 ${order.firstName || '@' + order.username}\n` +
+                          `💰 ${order.amount}$\n\n` +
+                          `📸 *تم استلام الصورة أعلاه*`;
+    
+    const keyboard = {
+        inline_keyboard: [
+            [
+                { text: '✅ تأكيد الدفع', callback_data: `confirm_deposit_${order.orderId}` },
+                { text: '❌ رفض الدفع', callback_data: `reject_deposit_${order.orderId}` }
+            ],
+            [
+                { text: '🔍 تحت المراجعة', callback_data: `review_deposit_${order.orderId}` },
+                { text: '📝 إرسال ملاحظة', callback_data: `note_deposit_${order.orderId}` }
+            ]
+        ]
+    };
+    
+    for (const adminId of admins) {
+        try {
+            await adminBot.sendMessage(adminId, controlMessage, {
+                parse_mode: 'Markdown',
+                reply_markup: keyboard
+            });
+        } catch (error) {
+            console.error(`❌ فشل إرسال رسالة التحكم للإدمن ${adminId}:`, error.message);
+        }
+    }
 }
 
-// ========== بوت المستخدمين (@Diamouffbot) ==========
+// ========== بوت المستخدمين ==========
 
 chargingBot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
@@ -323,7 +383,7 @@ chargingBot.on('message', async (msg) => {
     console.log(`📩 رسالة من ${chatId}: ${text}`);
     
     const user = getUser(chatId);
-    updateUser(chatId, {}); // تحديث النشاط
+    updateUser(chatId, {});
     
     // زر الإلغاء يعمل في أي وقت
     if (text === '🚫 إلغاء' || text === '🏠 الرئيسية') {
@@ -374,7 +434,7 @@ chargingBot.on('message', async (msg) => {
     }
 });
 
-// معالج الصور المباشر
+// معالج الصور
 chargingBot.on('photo', async (msg) => {
     const chatId = msg.chat.id;
     const session = userSessions[chatId];
@@ -394,8 +454,7 @@ function showMainMenu(chatId, user) {
             keyboard: [
                 ['💳 شحن رصيد', '🎮 الخدمات'],
                 ['📋 طلباتي', '💰 رصيدي'],
-                ['🆘 المساعدة', '📞 تواصل مع الإدارة'],
-                ['🚫 إلغاء']
+                ['🆘 المساعدة', '📞 تواصل مع الإدارة']
             ],
             resize_keyboard: true
         }
@@ -403,7 +462,7 @@ function showMainMenu(chatId, user) {
     
     const message = `🎮 *مرحباً بك في بوت شحن Free Fire*\n\n` +
                    `👤 ${user.firstName || 'عزيزي المستخدم'}\n` +
-                   `💰 رصيدك: *${user.balance}$*\n` +
+                   `💰 رصيدك: *${user.balance} دولار*\n` +
                    `🎯 خصمك: *${user.discount}%*\n` +
                    `📊 ${activeServices} خدمة متاحة\n\n` +
                    `📌 *اختر من القائمة:*`;
@@ -417,7 +476,7 @@ function showMainMenu(chatId, user) {
 function showServicesMenu(chatId, user) {
     const activeServices = Object.values(services)
         .filter(s => s.isActive && s.stock > 0)
-        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+        .sort((a, b) => a.price - b.price);
     
     if (activeServices.length === 0) {
         chargingBot.sendMessage(chatId,
@@ -428,8 +487,9 @@ function showServicesMenu(chatId, user) {
         return;
     }
     
-    let message = `🎮 *الخدمات المتاحة*\n\n` +
-                 `💰 رصيدك الحالي: *${user.balance}$*\n\n`;
+    let message = `🎮 *خدمات Free Fire*\n\n` +
+                 `💰 رصيدك الحالي: *${user.balance} دولار*\n` +
+                 `🎯 خصمك: *${user.discount}%*\n\n`;
     
     const keyboardRows = [];
     
@@ -438,10 +498,10 @@ function showServicesMenu(chatId, user) {
         const priceText = finalPrice.toFixed(2);
         
         message += `🎮 *${service.name}*\n`;
-        message += `   💰 ${priceText}$ (${service.stock} متبقي)\n`;
-        message += `   📝 ${service.description}\n\n`;
+        message += `💰 ${priceText} دولار (${service.stock} متبقي)\n`;
+        message += `📝 ${service.description}\n\n`;
         
-        keyboardRows.push([`🎮 ${service.name} - ${priceText}$`]);
+        keyboardRows.push([`🎮 ${service.name} - ${priceText} دولار`]);
     });
     
     keyboardRows.push(['🏠 الرئيسية', '🚫 إلغاء']);
@@ -477,8 +537,8 @@ function selectService(chatId, user, serviceName) {
     if (user.balance < finalPrice) {
         chargingBot.sendMessage(chatId,
             `❌ *رصيدك غير كافي*\n\n` +
-            `💰 رصيدك: ${user.balance}$\n` +
-            `💵 السعر: ${finalPrice.toFixed(2)}$\n\n` +
+            `💰 رصيدك: ${user.balance} دولار\n` +
+            `💵 السعر: ${finalPrice.toFixed(2)} دولار\n\n` +
             `يرجى شحن رصيد أولاً.`,
             { parse_mode: 'Markdown' }
         );
@@ -487,7 +547,7 @@ function selectService(chatId, user, serviceName) {
     
     chargingBot.sendMessage(chatId,
         `🎮 *${service.name}*\n\n` +
-        `💰 السعر: ${finalPrice.toFixed(2)}$\n` +
+        `💰 السعر: ${finalPrice.toFixed(2)} دولار\n` +
         `📝 ${service.description}\n\n` +
         `🆔 *أدخل ID الخاص بك في Free Fire:*`,
         {
@@ -568,7 +628,7 @@ async function handleGameId(chatId, text, session, user) {
     chargingBot.sendMessage(chatId,
         `✅ *تم تقديم طلبك بنجاح!*\n\n` +
         `🎮 الخدمة: ${session.serviceName}\n` +
-        `💰 المبلغ: ${session.price}$\n` +
+        `💰 المبلغ: ${session.price} دولار\n` +
         `🆔 رقم الطلب: ${order.orderId}\n` +
         `🎮 ID اللعبة: ${gameId}\n\n` +
         `⏳ جاري تنفيذ طلبك...\n` +
@@ -613,9 +673,9 @@ async function handleDepositAmount(chatId, text, user) {
     
     chargingBot.sendMessage(chatId,
         `💰 *طلب شحن رصيد*\n\n` +
-        `💵 المبلغ: *${amount}$*\n\n` +
+        `💵 المبلغ: *${amount} دولار*\n\n` +
         `📋 *تعليمات الدفع:*\n` +
-        `1. قم بتحويل *${amount}$* إلى:\n` +
+        `1. قم بتحويل *${amount} دولار* إلى:\n` +
         `   🆔 *${PAYMENT_ID}*\n` +
         `2. بعد التحويل، أرسل *صورة إيصال الدفع* هنا\n\n` +
         `📸 *أرسل صورة الإيصال الآن:*\n` +
@@ -654,7 +714,7 @@ async function handleDepositReceipt(chatId, msg, session) {
         // إرسال إشعار للمستخدم
         chargingBot.sendMessage(chatId,
             `✅ *تم استلام إيصال الدفع بنجاح!*\n\n` +
-            `💰 المبلغ: ${session.amount}$\n` +
+            `💰 المبلغ: ${session.amount} دولار\n` +
             `🆔 رقم الطلب: ${order.orderId}\n\n` +
             `⏳ *جاري مراجعة الإيصال...*\n` +
             `سيتم إعلامك عند التأكيد خلال دقائق.`,
@@ -667,8 +727,8 @@ async function handleDepositReceipt(chatId, msg, session) {
             }
         );
         
-        // إرسال الصورة مباشرة إلى الإدارة مع معلومات الطلب
-        await sendDepositNotification(order, photoId);
+        // إرسال الصورة مباشرة إلى الإدارة
+        await sendReceiptToAdmin(order, photoId);
         
     } catch (error) {
         console.error('❌ خطأ في معالجة الإيصال:', error);
@@ -699,12 +759,15 @@ function showUserOrders(chatId) {
         const status = getStatusText(order.status);
         
         message += `${icon} *${order.serviceName || 'شحن رصيد'}*\n`;
-        message += `💰 ${order.amount}$ | ${status}\n`;
+        message += `💰 ${order.amount} دولار | ${status}\n`;
         message += `🆔 ${order.orderId}\n`;
+        if (order.gameId) {
+            message += `🎮 ID: ${order.gameId}\n`;
+        }
         if (order.adminNotes) {
             message += `📝 ملاحظة: ${order.adminNotes}\n`;
         }
-        message += `\n`;
+        message += `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}\n\n`;
     });
     
     chargingBot.sendMessage(chatId, message, {
@@ -719,9 +782,9 @@ function showUserOrders(chatId) {
 function showBalance(chatId, user) {
     chargingBot.sendMessage(chatId,
         `💰 *معلومات الرصيد*\n\n` +
-        `💵 الرصيد: *${user.balance}$*\n` +
+        `💵 الرصيد: *${user.balance} دولار*\n` +
         `🎯 الخصم: *${user.discount}%*\n` +
-        `📊 إجمالي المشتريات: *${user.totalSpent}$*\n` +
+        `📊 إجمالي المشتريات: *${user.totalSpent} دولار*\n` +
         `📦 عدد الطلبات: *${user.ordersCount}*`,
         {
             parse_mode: 'Markdown',
@@ -738,7 +801,7 @@ function showHelp(chatId) {
                     `💳 *شحن الرصيد:*\n` +
                     `1. اضغط "💳 شحن رصيد"\n` +
                     `2. أدخل المبلغ\n` +
-                    `3. أرسل صورة الإيصال مباشرة\n` +
+                    `3. أرسل صورة الإيصال\n` +
                     `4. انتظر التأكيد من الإدارة\n\n` +
                     `🎮 *شراء الخدمات:*\n` +
                     `1. اضغط "🎮 الخدمات"\n` +
@@ -746,7 +809,7 @@ function showHelp(chatId) {
                     `3. أدخل ID اللعبة\n` +
                     `4. انتظر التنفيذ\n\n` +
                     `📞 *تواصل مع الإدارة:*\n` +
-                    `لأي استفسار أو مشكلة\n\n` +
+                    `للشكاوى أو الاستفسارات\n\n` +
                     `🚫 *لإلغاء أي عملية:*\n` +
                     `اضغط على زر "🚫 إلغاء"`;
     
@@ -796,7 +859,7 @@ async function sendOrderNotification(order) {
                    `👤 ${order.firstName || '@' + order.username}\n` +
                    `🆔 \`${order.userId}\`\n` +
                    `🎮 ${order.serviceName}\n` +
-                   `💰 ${order.amount}$\n` +
+                   `💰 ${order.amount} دولار\n` +
                    `🎮 ID: \`${order.gameId}\`\n` +
                    `🆔 ${order.orderId}\n` +
                    `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}`;
@@ -825,62 +888,7 @@ async function sendOrderNotification(order) {
     }
 }
 
-async function sendDepositNotification(order, photoId) {
-    const admins = [ADMIN_ID, SECOND_ADMIN_ID];
-    
-    // أولاً: إرسال الصورة مباشرة مع التفاصيل الأساسية
-    const photoCaption = `💳 *إيصال دفع جديد*\n\n` +
-                        `👤 ${order.firstName || '@' + order.username}\n` +
-                        `🆔 \`${order.userId}\`\n` +
-                        `💰 *${order.amount}$*\n` +
-                        `🆔 ${order.orderId}\n` +
-                        `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}`;
-    
-    // إرسال الصورة مع التسمية التوضيحية
-    for (const adminId of admins) {
-        try {
-            await adminBot.sendPhoto(adminId, photoId, {
-                caption: photoCaption,
-                parse_mode: 'Markdown'
-            });
-        } catch (error) {
-            console.error(`❌ فشل إرسال الصورة للإدمن ${adminId}:`, error.message);
-        }
-    }
-    
-    // ثانياً: إرسال رسالة منفصلة مع أزرار التحكم
-    const controlMessage = `🔧 *إدارة طلب الشحن*\n\n` +
-                          `🆔 ${order.orderId}\n` +
-                          `👤 ${order.firstName || '@' + order.username}\n` +
-                          `💰 ${order.amount}$\n\n` +
-                          `📸 *تم استلام الصورة أعلاه*`;
-    
-    const keyboard = {
-        inline_keyboard: [
-            [
-                { text: '✅ تأكيد الدفع', callback_data: `confirm_deposit_${order.orderId}` },
-                { text: '❌ رفض الدفع', callback_data: `reject_deposit_${order.orderId}` }
-            ],
-            [
-                { text: '🔍 تحت المراجعة', callback_data: `review_deposit_${order.orderId}` },
-                { text: '📝 إرسال ملاحظة', callback_data: `note_deposit_${order.orderId}` }
-            ]
-        ]
-    };
-    
-    for (const adminId of admins) {
-        try {
-            await adminBot.sendMessage(adminId, controlMessage, {
-                parse_mode: 'Markdown',
-                reply_markup: keyboard
-            });
-        } catch (error) {
-            console.error(`❌ فشل إرسال رسالة التحكم للإدمن ${adminId}:`, error.message);
-        }
-    }
-}
-
-// ========== بوت الإدارة (@otzhabot) ==========
+// ========== بوت الإدارة ==========
 
 adminBot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
@@ -936,7 +944,7 @@ adminBot.on('message', async (msg) => {
             showAllOrders(chatId);
             break;
             
-        case '💳 الشحنات':
+        case '💳 طلبات الشحن':
             showDepositOrders(chatId);
             break;
             
@@ -975,7 +983,7 @@ function showAdminMainMenu(chatId) {
         reply_markup: {
             keyboard: [
                 ['📦 إدارة الخدمات', '📋 الطلبات'],
-                ['💳 الشحنات', '👥 المستخدمين'],
+                ['💳 طلبات الشحن', '👥 المستخدمين'],
                 ['📊 الإحصائيات', '🔄 تحديث'],
                 ['🆕 إضافة خدمة', '🚫 إلغاء']
             ],
@@ -984,7 +992,7 @@ function showAdminMainMenu(chatId) {
     };
     
     adminBot.sendMessage(chatId,
-        `👑 *لوحة التحكم*\n\n` +
+        `👑 *لوحة تحكم Free Fire*\n\n` +
         `📊 *الإحصائيات الحية:*\n` +
         `📦 الخدمات: ${Object.keys(services).length} (${activeServices} مفعلة)\n` +
         `📋 طلبات خدمات: ${pendingOrders}\n` +
@@ -1014,12 +1022,12 @@ function showServicesManagement(chatId) {
         return;
     }
     
-    let message = `📦 *إدارة الخدمات*\n\n`;
+    let message = `📦 *إدارة خدمات Free Fire*\n\n`;
     
     allServices.slice(0, 10).forEach((service, index) => {
         const status = service.isActive ? '🟢' : '🔴';
         message += `${index + 1}. ${status} *${service.name}*\n`;
-        message += `   💰 ${service.price}$ | 📦 ${service.stock}\n`;
+        message += `   💰 ${service.price} دولار | 📦 ${service.stock}\n`;
         message += `   🆔 \`${service.id}\`\n\n`;
     });
     
@@ -1035,7 +1043,7 @@ function showServicesManagement(chatId) {
         ]);
     });
     
-    keyboardRows.push(['🆕 إضافة خدمة', '📋 جميع الخدمات']);
+    keyboardRows.push(['🆕 إضافة خدمة']);
     keyboardRows.push(['🏠 الرئيسية', '🚫 إلغاء']);
     
     const keyboard = {
@@ -1059,7 +1067,7 @@ function startAddServiceProcess(chatId) {
     };
     
     adminBot.sendMessage(chatId,
-        `🆕 *إضافة خدمة جديدة*\n\n` +
+        `🆕 *إضافة خدمة جديدة لـ Free Fire*\n\n` +
         `*الخطوة 1/4:* أدخل اسم الخدمة\n` +
         `مثال: "جواهر فري فاير 5000+500"`,
         {
@@ -1128,7 +1136,7 @@ async function handleRejectDepositReason(chatId, text, session) {
         // إشعار المستخدم
         chargingBot.sendMessage(order.userId,
             `❌ *تم رفض إيصال الدفع*\n\n` +
-            `💰 ${order.amount}$\n` +
+            `💰 ${order.amount} دولار\n` +
             `🆔 ${order.orderId}\n\n` +
             `📝 *السبب:* ${text}\n\n` +
             `💡 يرجى إرسال إيصال دفع صالح`,
@@ -1164,7 +1172,7 @@ async function handleAddServiceStep(chatId, text, session) {
             session.step = 3;
             adminBot.sendMessage(chatId,
                 `✅ *تم حفظ الوصف*\n\n` +
-                `*الخطوة 3/4:* أدخل سعر الخدمة ($)\n` +
+                `*الخطوة 3/4:* أدخل سعر الخدمة (دولار)\n` +
                 `مثال: "45" أو "10.5"`,
                 { parse_mode: 'Markdown' }
             );
@@ -1208,7 +1216,7 @@ async function handleAddServiceStep(chatId, text, session) {
             adminBot.sendMessage(chatId,
                 `🎉 *تمت إضافة الخدمة بنجاح!*\n\n` +
                 `🎮 ${service.name}\n` +
-                `💰 ${service.price}$\n` +
+                `💰 ${service.price} دولار\n` +
                 `📦 ${service.stock}\n` +
                 `🆔 ${service.id}\n\n` +
                 `✅ الخدمة متاحة الآن للمستخدمين`,
@@ -1254,9 +1262,9 @@ function startEditServiceProcess(chatId, serviceId) {
     };
     
     adminBot.sendMessage(chatId,
-        `✏️ *تعديل الخدمة*\n\n` +
+        `✏️ *تعديل خدمة Free Fire*\n\n` +
         `🎮 ${service.name}\n` +
-        `💰 ${service.price}$ | 📦 ${service.stock}\n` +
+        `💰 ${service.price} دولار | 📦 ${service.stock}\n` +
         `🆔 ${service.id}\n\n` +
         `اختر ما تريد تعديله:`,
         {
@@ -1295,7 +1303,7 @@ async function handleEditServiceStep(chatId, text, session) {
         session.editingField = 'price';
         adminBot.sendMessage(chatId,
             `✏️ *تعديل السعر*\n\n` +
-            `السعر الحالي: ${service.price}$\n\n` +
+            `السعر الحالي: ${service.price} دولار\n\n` +
             `أدخل السعر الجديد:`,
             { parse_mode: 'Markdown' }
         );
@@ -1376,7 +1384,7 @@ function confirmDeleteService(chatId, serviceId) {
     adminBot.sendMessage(chatId,
         `⚠️ *تأكيد حذف الخدمة*\n\n` +
         `🎮 ${service.name}\n` +
-        `💰 ${service.price}$\n` +
+        `💰 ${service.price} دولار\n` +
         `📦 ${service.stock}\n` +
         `🆔 ${service.id}\n\n` +
         `❌ *تحذير:* لا يمكن التراجع عن الحذف!\n` +
@@ -1438,12 +1446,11 @@ function toggleServiceStatusAndNotify(chatId, serviceId) {
     }
 }
 
-// ========== معالجة Callback Queries المتقدمة ==========
+// ========== معالجة Callback Queries ==========
 
 adminBot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
-    const messageId = callbackQuery.message.message_id;
     
     if (![ADMIN_ID, SECOND_ADMIN_ID].includes(parseInt(chatId))) {
         adminBot.answerCallbackQuery(callbackQuery.id, { text: '❌ غير مصرح' });
@@ -1471,12 +1478,8 @@ adminBot.on('callback_query', async (callbackQuery) => {
             const orderId = data.replace('review_deposit_', '');
             await handleReviewDeposit(callbackQuery, orderId, chatId);
             
-        } else if (data.startsWith('note_')) {
-            const orderId = data.replace('note_', '');
-            await startAddNoteProcess(chatId, orderId);
-            
-        } else if (data.startsWith('note_deposit_')) {
-            const orderId = data.replace('note_deposit_', '');
+        } else if (data.startsWith('note_') || data.startsWith('note_deposit_')) {
+            const orderId = data.replace('note_', '').replace('note_deposit_', '');
             await startAddNoteProcess(chatId, orderId);
         }
         
@@ -1494,27 +1497,13 @@ async function handleCompleteOrder(callbackQuery, orderId, adminId) {
         chargingBot.sendMessage(order.userId,
             `✅ *تم إكمال طلبك*\n\n` +
             `🎮 ${order.serviceName}\n` +
-            `💰 ${order.amount}$\n` +
+            `💰 ${order.amount} دولار\n` +
             `🆔 ${order.orderId}\n\n` +
             `🎉 تم التنفيذ بنجاح!`,
             { parse_mode: 'Markdown' }
         );
         
         adminBot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم الإكمال' });
-        
-        // تحديث الرسالة الأصلية
-        try {
-            await adminBot.editMessageReplyMarkup({
-                chat_id: callbackQuery.message.chat.id,
-                message_id: callbackQuery.message.message_id
-            }, {
-                inline_keyboard: [[
-                    { text: '✅ مكتمل', callback_data: 'completed' }
-                ]]
-            });
-        } catch (error) {
-            console.error('❌ خطأ في تحديث الرسالة:', error);
-        }
     }
 }
 
@@ -1531,9 +1520,9 @@ async function handleCancelOrder(callbackQuery, orderId, adminId) {
         chargingBot.sendMessage(order.userId,
             `❌ *تم إلغاء طلبك*\n\n` +
             `🎮 ${order.serviceName}\n` +
-            `💰 ${order.amount}$\n` +
+            `💰 ${order.amount} دولار\n` +
             `🆔 ${order.orderId}\n\n` +
-            `💳 تم إرجاع ${order.amount}$ إلى رصيدك`,
+            `💳 تم إرجاع ${order.amount} دولار إلى رصيدك`,
             { parse_mode: 'Markdown' }
         );
         
@@ -1554,8 +1543,8 @@ async function handleConfirmDeposit(callbackQuery, orderId, adminId) {
         // إشعار المستخدم
         chargingBot.sendMessage(order.userId,
             `✅ *تم تأكيد شحن رصيدك*\n\n` +
-            `💰 ${order.amount}$\n` +
-            `💳 الرصيد الجديد: ${user.balance}$\n` +
+            `💰 ${order.amount} دولار\n` +
+            `💳 الرصيد الجديد: ${user.balance} دولار\n` +
             `🆔 ${order.orderId}\n\n` +
             `🎉 يمكنك الآن شراء الخدمات`,
             { parse_mode: 'Markdown' }
@@ -1573,8 +1562,7 @@ async function handleRejectDeposit(callbackQuery, orderId, adminId) {
     
     adminBot.sendMessage(callbackQuery.message.chat.id,
         `❌ *سبب رفض الدفع*\n\n` +
-        `أدخل سبب الرفض لإرساله للمستخدم:\n` +
-        `مثال: "الإيصال غير واضح"`,
+        `أدخل سبب الرفض لإرساله للمستخدم:`,
         {
             parse_mode: 'Markdown',
             reply_markup: {
@@ -1594,7 +1582,7 @@ async function handleReviewDeposit(callbackQuery, orderId, adminId) {
         // إشعار المستخدم
         chargingBot.sendMessage(order.userId,
             `🔍 *طلبك قيد المراجعة*\n\n` +
-            `💰 ${order.amount}$\n` +
+            `💰 ${order.amount} دولار\n` +
             `🆔 ${order.orderId}\n\n` +
             `⏳ جاري مراجعة الإيصال...\n` +
             `سيتم إعلامك بالنتيجة قريباً`,
@@ -1650,7 +1638,7 @@ function showAdminStats(chatId) {
         `📦 إجمالي الطلبات: ${totalOrders}\n` +
         `✅ المكتملة: ${completedOrders}\n` +
         `💳 بانتظار الدفع: ${pendingDeposits}\n` +
-        `💰 الإيرادات: ${totalRevenue.toFixed(2)}$\n\n` +
+        `💰 الإيرادات: ${totalRevenue.toFixed(2)} دولار\n\n` +
         `📅 آخر تحديث: ${new Date().toLocaleString('ar-SA')}`,
         {
             parse_mode: 'Markdown',
@@ -1678,7 +1666,7 @@ function showAllOrders(chatId) {
         const status = getStatusText(order.status);
         
         message += `${icon} *${order.serviceName || 'شحن رصيد'}*\n`;
-        message += `👤 @${order.username} | 💰 ${order.amount}$\n`;
+        message += `👤 @${order.username} | 💰 ${order.amount} دولار\n`;
         message += `🆔 ${order.orderId} | ${status}\n`;
         message += `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}\n\n`;
     });
@@ -1706,7 +1694,7 @@ function showDepositOrders(chatId) {
     
     depositOrders.slice(0, 10).forEach(order => {
         const status = getStatusText(order.status);
-        message += `💰 *${order.amount}$*\n`;
+        message += `💰 *${order.amount} دولار*\n`;
         message += `👤 ${order.firstName || '@' + order.username}\n`;
         message += `🆔 ${order.orderId} | ${status}\n`;
         if (order.adminNotes) {
@@ -1740,8 +1728,8 @@ function showUsersList(chatId) {
         const lastOrder = userOrders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
         
         message += `👤 ${user.firstName || '@' + user.username}\n`;
-        message += `💰 ${user.balance}$ | 📦 ${user.ordersCount}\n`;
-        message += `💳 ${user.totalSpent}$ | 🆔 ${user.userId}\n`;
+        message += `💰 ${user.balance} دولار | 📦 ${user.ordersCount}\n`;
+        message += `💳 ${user.totalSpent} دولار | 🆔 ${user.userId}\n`;
         if (lastOrder) {
             message += `📅 آخر طلب: ${new Date(lastOrder.createdAt).toLocaleDateString('ar-SA')}\n`;
         }
@@ -1759,14 +1747,14 @@ function showUsersList(chatId) {
 
 // ========== تشغيل النظام ==========
 
-console.log('🚀 بدء تشغيل نظام البوتات...');
+console.log('🚀 بدء تشغيل نظام بوتات Free Fire...');
 
 // تحميل البيانات
 loadData();
 
 console.log('✅ النظام جاهز للعمل!');
-console.log(`🤖 بوت المستخدمين (@Diamouffbot): جاهز`);
-console.log(`👑 بوت الإدارة (@otzhabot): جاهز`);
+console.log(`🤖 بوت المستخدمين: جاهز`);
+console.log(`👑 بوت الإدارة: جاهز`);
 console.log(`📊 الخدمات: ${Object.keys(services).length}`);
 console.log(`👥 المستخدمين: ${Object.keys(users).length}`);
 console.log(`💳 معرف الدفع: ${PAYMENT_ID}`);
