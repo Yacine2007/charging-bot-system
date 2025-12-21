@@ -4,7 +4,7 @@ const path = require('path');
 const axios = require('axios');
 
 // === إعداد التوكنات ===
-const CHARGING_BOT_TOKEN = '8223596744:AAGHOMQ3Sjk3-X_Z7eXXnL5drAXaHXglLFg';
+const CHARGING_BOT_TOKEN = '8557910133:AAHf82aXPLtewUJDAt3JpO_yEZ-vbzfHQWo';
 const ADMIN_BOT_TOKEN = '8216188569:AAEEA1q_os_6XfSJrUDLDkkQxZXh-3OMAVU';
 
 // === إعداد المدراء ===
