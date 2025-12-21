@@ -1,6 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 
 // === إعداد التوكنات ===
 const CHARGING_BOT_TOKEN = '8223596744:AAGHOMQ3Sjk3-X_Z7eXXnL5drAXaHXglLFg';
@@ -301,58 +302,96 @@ function updateOrderStatus(orderId, status, adminId = null, notes = '') {
     return order;
 }
 
-// ========== إرسال الصور إلى لوحة التحكم ==========
-async function sendReceiptToAdmin(order, photoId) {
+// ========== دالة تحميل وإرسال الصور إلى الإدارة ==========
+async function downloadAndSendToAdmin(order, photoId) {
     const admins = [ADMIN_ID, SECOND_ADMIN_ID];
     
-    const caption = `💳 *إيصال دفع جديد*\n\n` +
-                   `👤 ${order.firstName || '@' + order.username}\n` +
-                   `🆔 \`${order.userId}\`\n` +
-                   `💰 *${order.amount}$*\n` +
-                   `🆔 ${order.orderId}\n` +
-                   `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}`;
-    
-    // إرسال الصورة مباشرة إلى كل أدمن
-    for (const adminId of admins) {
-        try {
-            await adminBot.sendPhoto(adminId, photoId, {
-                caption: caption,
-                parse_mode: 'Markdown'
-            });
-            console.log(`✅ تم إرسال الصورة ${order.orderId} إلى الأدمن ${adminId}`);
-        } catch (error) {
-            console.error(`❌ فشل إرسال الصورة للإدمن ${adminId}:`, error.message);
+    try {
+        // الحصول على معلومات الملف من بوت المستخدمين
+        const file = await chargingBot.getFile(photoId);
+        const filePath = file.file_path;
+        const downloadUrl = `https://api.telegram.org/file/bot${CHARGING_BOT_TOKEN}/${filePath}`;
+        
+        // تحميل الصورة كـ buffer
+        const response = await axios({
+            method: 'GET',
+            url: downloadUrl,
+            responseType: 'arraybuffer'
+        });
+        
+        const photoBuffer = Buffer.from(response.data, 'binary');
+        
+        const caption = `💳 *إيصال دفع جديد*\n\n` +
+                       `👤 ${order.firstName || '@' + order.username}\n` +
+                       `🆔 \`${order.userId}\`\n` +
+                       `💰 *${order.amount} دولار*\n` +
+                       `🆔 ${order.orderId}\n` +
+                       `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}`;
+        
+        // إرسال الصورة إلى كل أدمن
+        for (const adminId of admins) {
+            try {
+                await adminBot.sendPhoto(adminId, photoBuffer, {
+                    caption: caption,
+                    parse_mode: 'Markdown'
+                });
+                console.log(`✅ تم إرسال الصورة ${order.orderId} إلى الأدمن ${adminId}`);
+            } catch (error) {
+                console.error(`❌ فشل إرسال الصورة للإدمن ${adminId}:`, error.message);
+            }
         }
-    }
-    
-    // إرسال رسالة التحكم المنفصلة
-    const controlMessage = `🔧 *إدارة طلب الشحن*\n\n` +
-                          `🆔 ${order.orderId}\n` +
-                          `👤 ${order.firstName || '@' + order.username}\n` +
-                          `💰 ${order.amount}$\n\n` +
-                          `📸 *تم استلام الصورة أعلاه*`;
-    
-    const keyboard = {
-        inline_keyboard: [
-            [
-                { text: '✅ تأكيد الدفع', callback_data: `confirm_deposit_${order.orderId}` },
-                { text: '❌ رفض الدفع', callback_data: `reject_deposit_${order.orderId}` }
-            ],
-            [
-                { text: '🔍 تحت المراجعة', callback_data: `review_deposit_${order.orderId}` },
-                { text: '📝 إرسال ملاحظة', callback_data: `note_deposit_${order.orderId}` }
+        
+        // إرسال رسالة التحكم
+        const controlMessage = `🔧 *إدارة طلب الشحن*\n\n` +
+                              `🆔 ${order.orderId}\n` +
+                              `👤 ${order.firstName || '@' + order.username}\n` +
+                              `💰 ${order.amount} دولار\n\n` +
+                              `📸 *تم استلام الصورة أعلاه*`;
+        
+        const keyboard = {
+            inline_keyboard: [
+                [
+                    { text: '✅ تأكيد الدفع', callback_data: `confirm_deposit_${order.orderId}` },
+                    { text: '❌ رفض الدفع', callback_data: `reject_deposit_${order.orderId}` }
+                ],
+                [
+                    { text: '🔍 تحت المراجعة', callback_data: `review_deposit_${order.orderId}` },
+                    { text: '📝 إرسال ملاحظة', callback_data: `note_deposit_${order.orderId}` }
+                ]
             ]
-        ]
-    };
-    
-    for (const adminId of admins) {
-        try {
-            await adminBot.sendMessage(adminId, controlMessage, {
-                parse_mode: 'Markdown',
-                reply_markup: keyboard
-            });
-        } catch (error) {
-            console.error(`❌ فشل إرسال رسالة التحكم للإدمن ${adminId}:`, error.message);
+        };
+        
+        for (const adminId of admins) {
+            try {
+                await adminBot.sendMessage(adminId, controlMessage, {
+                    parse_mode: 'Markdown',
+                    reply_markup: keyboard
+                });
+            } catch (error) {
+                console.error(`❌ فشل إرسال رسالة التحكم للإدمن ${adminId}:`, error.message);
+            }
+        }
+        
+    } catch (error) {
+        console.error('❌ خطأ في تحميل وإرسال الصورة:', error.message);
+        
+        // بديل: إرسال رسالة بدون صورة
+        const fallbackMessage = `💳 *إيصال دفع جديد*\n\n` +
+                               `👤 ${order.firstName || '@' + order.username}\n` +
+                               `🆔 \`${order.userId}\`\n` +
+                               `💰 *${order.amount} دولار*\n` +
+                               `🆔 ${order.orderId}\n` +
+                               `📅 ${new Date(order.createdAt).toLocaleString('ar-SA')}\n\n` +
+                               `⚠️ *لم يتم إرسال الصورة بسبب خطأ تقني*`;
+        
+        for (const adminId of admins) {
+            try {
+                await adminBot.sendMessage(adminId, fallbackMessage, {
+                    parse_mode: 'Markdown'
+                });
+            } catch (err) {
+                console.error(`❌ فشل إرسال الرسالة البديلة:`, err.message);
+            }
         }
     }
 }
@@ -727,8 +766,8 @@ async function handleDepositReceipt(chatId, msg, session) {
             }
         );
         
-        // إرسال الصورة مباشرة إلى الإدارة
-        await sendReceiptToAdmin(order, photoId);
+        // تحميل وإرسال الصورة إلى الإدارة
+        await downloadAndSendToAdmin(order, photoId);
         
     } catch (error) {
         console.error('❌ خطأ في معالجة الإيصال:', error);
